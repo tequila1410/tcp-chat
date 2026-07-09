@@ -29,7 +29,10 @@ fn main() -> io::Result<()> {
             let mut clients_lock = clients_clone.lock().unwrap();
             match stream.try_clone() {
                 Ok(val) => clients_lock.push((peer_addr, val)),
-                Err(error) => eprintln!("Failed to clone stream for client {peer_addr}: {error}")
+                Err(error) => {
+                    eprintln!("Failed to clone stream for client {peer_addr}: {error}");
+                    continue;
+                }
             }
         }
         thread::spawn(move || {
@@ -44,6 +47,7 @@ fn main() -> io::Result<()> {
 
 fn handle_client(mut stream: TcpStream, peer_addr: SocketAddr, clients: Clients) -> io::Result<()> {
     let mut buffer = [0u8; 1024];
+    let mut pending = Vec::new();
 
     loop {
         let bytes_read = match stream.read(&mut buffer) {
@@ -61,29 +65,11 @@ fn handle_client(mut stream: TcpStream, peer_addr: SocketAddr, clients: Clients)
             Err(error) => return Err(error),
         };
 
-        let mut disconnected_clients = Vec::new();
-        {
-            let mut clients = clients.lock().unwrap();
-            
-            for (client_addr, client_stream) in clients.iter_mut() {
-                if *client_addr == peer_addr {
-                    continue;
-                }
-                match client_stream.write_all(&buffer[..bytes_read]) {
-                    Ok(()) => {},
-                    Err(error) if is_client_disconnect_error(&error) => {
-                        disconnected_clients.push(*client_addr);
-                        continue;
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
+        pending.extend_from_slice(&buffer[..bytes_read]);
+        while let Some(pos) = pending.iter().position(|&byte| byte == b'\n') {
+            let message = pending.drain(..=pos).collect::<Vec<u8>>();
+            broadcast_message(&clients, peer_addr, message.as_slice())?;
         }
-
-        for client_addr in disconnected_clients {
-            remove_client(&clients, client_addr);
-        }
-        
     }
 }
 
@@ -97,4 +83,31 @@ fn is_client_disconnect_error(error: &io::Error) -> bool {
 fn remove_client(clients: &Clients, peer_addr: SocketAddr) {
     let mut clients_lock = clients.lock().unwrap();
     clients_lock.retain(|(addr, _)| *addr != peer_addr);
+}
+
+fn broadcast_message(clients: &Clients, sender_addr: SocketAddr, message: &[u8]) -> io::Result<()> {
+    let mut disconnected_clients = Vec::new();
+    {
+        let mut clients = clients.lock().unwrap();
+        
+        for (client_addr, client_stream) in clients.iter_mut() {
+            if *client_addr == sender_addr {
+                continue;
+            }
+            match client_stream.write_all(message) {
+                Ok(()) => {},
+                Err(error) if is_client_disconnect_error(&error) => {
+                    disconnected_clients.push(*client_addr);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    for client_addr in disconnected_clients {
+        remove_client(&clients, client_addr);
+    }
+
+    Ok(())
 }

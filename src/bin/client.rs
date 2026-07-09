@@ -12,20 +12,25 @@ fn main() -> io::Result<()> {
 
     thread::spawn(move || {
         let mut buffer = [0u8; 1024];
+        let mut pending = Vec::new();
         loop {
-            match read_client.read(&mut buffer) {
+            let bytes_read = match read_client.read(&mut buffer) {
                 Ok(0) => {
                     println!("Server closed connection");
                     break;
                 }
-                Ok(n) => {
-                    let msg = String::from_utf8_lossy(&buffer[..n]);
-                    println!("\n[MSG] {}", msg);
-                }
+                Ok(n) => n,
                 Err(e) => {
                     eprintln!("Read error: {}", e);
                     break;
                 }
+            };
+
+            pending.extend_from_slice(&buffer[..bytes_read]);
+            while let Some(pos) = pending.iter().position(|&byte| byte == b'\n') {
+                let message = pending.drain(..=pos).collect::<Vec<u8>>();
+                let msg = String::from_utf8_lossy(message.as_slice());
+                println!("\n[MSG] {}", msg);
             }
         }
     });
