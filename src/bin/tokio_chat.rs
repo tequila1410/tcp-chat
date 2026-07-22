@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicU64;
 #[derive(Debug)]
 struct ClientHandle {
     login: Option<String>,
-    sender: mpsc::Sender<Vec<u8>>,
+    sender: mpsc::Sender<Arc<Vec<u8>>>,
     shutdown: oneshot::Sender<()>,
 }
 
@@ -54,7 +54,7 @@ async fn main() -> io::Result<()> {
 }
 
 async fn handle_client(stream: TcpStream, clients: Clients, user_db: UserDB) -> io::Result<()> {
-    let (sender, receiver) = mpsc::channel::<Vec<u8>>(32);
+    let (sender, receiver) = mpsc::channel::<Arc<Vec<u8>>>(32);
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
     let session_id: SessionId = NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     {
@@ -88,6 +88,7 @@ async fn handle_client(stream: TcpStream, clients: Clients, user_db: UserDB) -> 
                 while let Some(position) = pending.iter().position(|&byte| byte == b'\n') {
                     let frame_len = position + 1;
                     if frame_len > MAX_FRAME_SIZE {
+                        remove_client(&clients, session_id).await;
                         return Err(io::Error::new(io::ErrorKind::InvalidData, "message too large"));
                     }
                     let message_bytes = pending.drain(..=position).collect::<Vec<u8>>();
@@ -96,14 +97,13 @@ async fn handle_client(stream: TcpStream, clients: Clients, user_db: UserDB) -> 
                         println!("{message_str}");
                         match parse_command(&message_str) {
                             Some(Command::Message(message)) => {
-                                let client_login = {
-                                    let client_lock = clients.lock().await;
-                                    client_lock.get(&session_id).and_then(|c| c.login.clone())
+                                if broadcast(message.into_bytes(), &clients, session_id).await.is_none() {
+                                    let mut client_lock = clients.lock().await;
+                                    if let Some(client) = client_lock.get_mut(&session_id) {
+                                        let _ = client.sender.try_send(Arc::new(b"Not authenticated\n".to_vec()));
+                                    }
                                 };
-                                if client_login.is_some() {
-                                    broadcast(message.into_bytes(), &clients, session_id).await;
-                                }
-                            },
+                            }
                             Some(Command::Auth(login, pass)) => {
                                 let mut client_lock = clients.lock().await;
                                 if let Some(db_pass) = user_db.get(&login) && *db_pass == pass {
@@ -112,14 +112,14 @@ async fn handle_client(stream: TcpStream, clients: Clients, user_db: UserDB) -> 
                                     }
                                 } else {
                                     if let Some(client) = client_lock.get_mut(&session_id) {
-                                        let _ = client.sender.try_send(b"Invalid data\n".to_vec());
+                                        let _ = client.sender.try_send(Arc::new(b"Invalid data\n".to_vec()));
                                     }
                                 };
                             },
                             _ => {
                                 let mut client_lock = clients.lock().await;
                                 if let Some(client) = client_lock.get_mut(&session_id) {
-                                    let _ = client.sender.try_send(b"Cant pars command\n".to_vec());
+                                    let _ = client.sender.try_send(Arc::new(b"Cant pars command\n".to_vec()));
                                 }
                                 eprintln!("Cant pars command");
                             }
@@ -148,7 +148,7 @@ async fn remove_client(clients: &Clients, session_id: SessionId) {
     };
 }
 
-fn spawn_write_task(mut receiver: Receiver<Vec<u8>>, mut write_half: OwnedWriteHalf, session_id: SessionId) {
+fn spawn_write_task(mut receiver: Receiver<Arc<Vec<u8>>>, mut write_half: OwnedWriteHalf, session_id: SessionId) {
     tokio::spawn(async move {
         while let Some(message) = receiver.recv().await {
             if let Err(error) = write_half.write_all(&message).await {
@@ -159,9 +159,9 @@ fn spawn_write_task(mut receiver: Receiver<Vec<u8>>, mut write_half: OwnedWriteH
     });
 }
 
-async fn broadcast(message_bytes: Vec<u8>, clients: &Clients, session_id: SessionId) {
+async fn broadcast(message_bytes: Vec<u8>, clients: &Clients, session_id: SessionId) -> Option<()> {
     let (senders, sender_login) = {
-        let clients_lock: tokio::sync::MutexGuard<'_, HashMap<u64, ClientHandle>> = clients.lock().await;
+        let clients_lock = clients.lock().await;
 
         let senders = clients_lock
             .iter()
@@ -175,32 +175,36 @@ async fn broadcast(message_bytes: Vec<u8>, clients: &Clients, session_id: Sessio
                     None
                 }
             })
-            .collect::<Vec<(SessionId, mpsc::Sender<Vec<u8>>)>>();
+            .collect::<Vec<(SessionId, mpsc::Sender<Arc<Vec<u8>>>)>>();
 
         let sender_login = clients_lock
             .get(&session_id)
-            .and_then(|client| client.login.clone())
-            .unwrap_or("Unknown".to_string());
+            .and_then(|client| client.login.clone());
 
         (senders, sender_login)
     };
     
-    let mut message = format!("[{sender_login}]: ").into_bytes();
-    message.extend_from_slice(&message_bytes);
-    message.push(b'\n');
-    for (id, sender) in senders {
-        match sender.try_send(message.clone()) {
-            Ok(_) => {println!("message sent")}
-            Err(TrySendError::Full(_)) => {
-                println!("Client {id} message full");
-                remove_client(&clients, id).await;
-            }
-            Err(TrySendError::Closed(_)) => {
-                println!("Client {id} disconnected");
-                remove_client(&clients, id).await;
-            }
+    if let Some(login) = sender_login {
+        let mut message = format!("[{login}]: ").into_bytes();
+        message.extend_from_slice(&message_bytes);
+        message.push(b'\n');
+        let message_arc = Arc::new(message);
+        for (id, sender) in senders {
+            match sender.try_send(message_arc.clone()) {
+                Ok(_) => {println!("message sent")}
+                Err(TrySendError::Full(_)) => {
+                    println!("Client {id} message full");
+                    remove_client(&clients, id).await;
+                }
+                Err(TrySendError::Closed(_)) => {
+                    println!("Client {id} disconnected");
+                    remove_client(&clients, id).await;
+                }
+            };
         };
+        return Some(());
     }
+    None
 }
 
 fn set_user_db() -> UserDB {
