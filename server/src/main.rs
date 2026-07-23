@@ -4,17 +4,12 @@ use std::sync::Arc;
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
-use std::sync::atomic::AtomicU64;
 
-#[derive(Debug)]
-struct ClientHandle {
-    login: Option<String>,
-    sender: mpsc::Sender<Arc<Vec<u8>>>,
-    shutdown: oneshot::Sender<()>,
-}
+mod client;
+
+use crate::client::{ClientRegistry, SessionId};
 
 #[derive(Debug)]
 enum Command {
@@ -22,17 +17,14 @@ enum Command {
     Message(String),
 }
 
-static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
-type SessionId = u64;
 type UserDB = Arc<HashMap<String, String>>;
-type Clients = Arc<Mutex<HashMap<SessionId, ClientHandle>>>;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let user_db = set_user_db();
 
     let listener = TcpListener::bind("127.0.0.1:1313").await?;
-    let clients: Clients = Arc::new(Mutex::new(HashMap::new()));
+    let client_registry = ClientRegistry::new();
 
     loop {
         let (stream, _) = match listener.accept().await {
@@ -43,24 +35,22 @@ async fn main() -> io::Result<()> {
             }
         };
 
-        let clients = Arc::clone(&clients);
         let user_db = Arc::clone(&user_db);
+        let client_registry= client_registry.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_client(stream, clients, user_db).await {
+            if let Err(error) = handle_client(stream, client_registry, user_db).await {
                 eprintln!("Client error: {error}");
             }
         });
     }
 }
 
-async fn handle_client(stream: TcpStream, clients: Clients, user_db: UserDB) -> io::Result<()> {
+async fn handle_client(stream: TcpStream, client_registry: ClientRegistry, user_db: UserDB) -> io::Result<()> {
     let (sender, receiver) = mpsc::channel::<Arc<Vec<u8>>>(32);
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
-    let session_id: SessionId = NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    {
-        let mut locked_clients = clients.lock().await;
-        locked_clients.insert(session_id, ClientHandle { login: None, sender, shutdown: shutdown_tx });
-    }
+
+    let session_id = client_registry.insert_client(sender, shutdown_tx).await;
+
     let (mut read_half, write_half) = stream.into_split();
 
     spawn_write_task(receiver, write_half, session_id);
@@ -75,12 +65,12 @@ async fn handle_client(stream: TcpStream, clients: Clients, user_db: UserDB) -> 
                 let bytes_read = match result {
                     Ok(0) => {
                         println!("Client disconnected: {session_id}");
-                        remove_client(&clients, session_id).await;
+                        client_registry.remove_client(session_id).await;
                         return Ok(());
                     }
                     Ok(n) => n,
                     Err(error) => {
-                        remove_client(&clients, session_id).await;
+                        client_registry.remove_client(session_id).await;
                         return Err(error);
                     }
                 };
@@ -88,7 +78,7 @@ async fn handle_client(stream: TcpStream, clients: Clients, user_db: UserDB) -> 
                 while let Some(position) = pending.iter().position(|&byte| byte == b'\n') {
                     let frame_len = position + 1;
                     if frame_len > MAX_FRAME_SIZE {
-                        remove_client(&clients, session_id).await;
+                        client_registry.remove_client(session_id).await;
                         return Err(io::Error::new(io::ErrorKind::InvalidData, "message too large"));
                     }
                     let message_bytes = pending.drain(..=position).collect::<Vec<u8>>();
@@ -97,30 +87,19 @@ async fn handle_client(stream: TcpStream, clients: Clients, user_db: UserDB) -> 
                         println!("{message_str}");
                         match parse_command(&message_str) {
                             Some(Command::Message(message)) => {
-                                if broadcast(message.into_bytes(), &clients, session_id).await.is_none() {
-                                    let mut client_lock = clients.lock().await;
-                                    if let Some(client) = client_lock.get_mut(&session_id) {
-                                        let _ = client.sender.try_send(Arc::new(b"Not authenticated\n".to_vec()));
-                                    }
+                                if client_registry.broadcast(message.into_bytes(), session_id).await.is_none() {
+                                    client_registry.send_message(session_id, b"Not authenticated\n".to_vec()).await;
                                 };
                             }
                             Some(Command::Auth(login, pass)) => {
-                                let mut client_lock = clients.lock().await;
                                 if let Some(db_pass) = user_db.get(&login) && *db_pass == pass {
-                                    if let Some(client) = client_lock.get_mut(&session_id) {
-                                        client.login = Some(login);
-                                    }
+                                    client_registry.authorize_client(session_id, login).await;
                                 } else {
-                                    if let Some(client) = client_lock.get_mut(&session_id) {
-                                        let _ = client.sender.try_send(Arc::new(b"Invalid data\n".to_vec()));
-                                    }
+                                    client_registry.send_message(session_id, b"Invalid data\n".to_vec()).await;
                                 };
                             },
                             _ => {
-                                let mut client_lock = clients.lock().await;
-                                if let Some(client) = client_lock.get_mut(&session_id) {
-                                    let _ = client.sender.try_send(Arc::new(b"Cant pars command\n".to_vec()));
-                                }
+                                client_registry.send_message(session_id, b"Can't pars command\n".to_vec()).await;
                                 eprintln!("Cant pars command");
                             }
                         }
@@ -128,7 +107,7 @@ async fn handle_client(stream: TcpStream, clients: Clients, user_db: UserDB) -> 
                     }
                 }
                 if pending.len() > MAX_FRAME_SIZE {
-                    remove_client(&clients, session_id).await;
+                    client_registry.remove_client(session_id).await;
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "message too large"));
                 }
             },
@@ -137,15 +116,7 @@ async fn handle_client(stream: TcpStream, clients: Clients, user_db: UserDB) -> 
                 return Ok(());
             }
         }
-        
     }
-}
-
-async fn remove_client(clients: &Clients, session_id: SessionId) {
-    let mut clients_lock = clients.lock().await;
-    if let Some(client) = clients_lock.remove(&session_id) {
-        let _ = client.shutdown.send(());
-    };
 }
 
 fn spawn_write_task(mut receiver: Receiver<Arc<Vec<u8>>>, mut write_half: OwnedWriteHalf, session_id: SessionId) {
@@ -157,54 +128,6 @@ fn spawn_write_task(mut receiver: Receiver<Arc<Vec<u8>>>, mut write_half: OwnedW
             }
         }
     });
-}
-
-async fn broadcast(message_bytes: Vec<u8>, clients: &Clients, session_id: SessionId) -> Option<()> {
-    let (senders, sender_login) = {
-        let clients_lock = clients.lock().await;
-
-        let senders = clients_lock
-            .iter()
-            .filter_map(|(id, client_handle)| {
-                if client_handle.login.is_some() && *id != session_id {
-                    Some((
-                        *id,
-                        client_handle.sender.clone()
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<(SessionId, mpsc::Sender<Arc<Vec<u8>>>)>>();
-
-        let sender_login = clients_lock
-            .get(&session_id)
-            .and_then(|client| client.login.clone());
-
-        (senders, sender_login)
-    };
-    
-    if let Some(login) = sender_login {
-        let mut message = format!("[{login}]: ").into_bytes();
-        message.extend_from_slice(&message_bytes);
-        message.push(b'\n');
-        let message_arc = Arc::new(message);
-        for (id, sender) in senders {
-            match sender.try_send(message_arc.clone()) {
-                Ok(_) => {println!("message sent")}
-                Err(TrySendError::Full(_)) => {
-                    println!("Client {id} message full");
-                    remove_client(&clients, id).await;
-                }
-                Err(TrySendError::Closed(_)) => {
-                    println!("Client {id} disconnected");
-                    remove_client(&clients, id).await;
-                }
-            };
-        };
-        return Some(());
-    }
-    None
 }
 
 fn set_user_db() -> UserDB {
