@@ -6,22 +6,18 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::{mpsc, oneshot};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use shared::framing::{decode_frame, FrameResult};
+use shared::protocol::ClientMessage;
 
 mod client;
 
 use crate::client::{ClientRegistry, SessionId};
 
-#[derive(Debug)]
-enum Command {
-    Auth(String, String),
-    Message(String),
-}
-
-type UserDB = Arc<HashMap<String, String>>;
+type Credentials = Arc<HashMap<String, String>>;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let user_db = set_user_db();
+    let credentials = init_credentials();
 
     let listener = TcpListener::bind("127.0.0.1:1313").await?;
     let client_registry = ClientRegistry::new();
@@ -35,17 +31,17 @@ async fn main() -> io::Result<()> {
             }
         };
 
-        let user_db = Arc::clone(&user_db);
+        let credentials = Arc::clone(&credentials);
         let client_registry= client_registry.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_client(stream, client_registry, user_db).await {
+            if let Err(error) = handle_client(stream, client_registry, credentials).await {
                 eprintln!("Client error: {error}");
             }
         });
     }
 }
 
-async fn handle_client(stream: TcpStream, client_registry: ClientRegistry, user_db: UserDB) -> io::Result<()> {
+async fn handle_client(stream: TcpStream, client_registry: ClientRegistry, credentials: Credentials) -> io::Result<()> {
     let (sender, receiver) = mpsc::channel::<Arc<Vec<u8>>>(32);
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
 
@@ -55,7 +51,6 @@ async fn handle_client(stream: TcpStream, client_registry: ClientRegistry, user_
 
     spawn_write_task(receiver, write_half, session_id);
 
-    const MAX_FRAME_SIZE: usize = 2 * 1024;
     let mut buffer = [0u8; 1024];
     let mut pending = Vec::new();
 
@@ -75,40 +70,33 @@ async fn handle_client(stream: TcpStream, client_registry: ClientRegistry, user_
                     }
                 };
                 pending.extend_from_slice(&buffer[..bytes_read]);
-                while let Some(position) = pending.iter().position(|&byte| byte == b'\n') {
-                    let frame_len = position + 1;
-                    if frame_len > MAX_FRAME_SIZE {
-                        client_registry.remove_client(session_id).await;
-                        return Err(io::Error::new(io::ErrorKind::InvalidData, "message too large"));
-                    }
-                    let message_bytes = pending.drain(..=position).collect::<Vec<u8>>();
-
-                    if let Ok(message_str) = std::str::from_utf8(&message_bytes) {
-                        println!("{message_str}");
-                        match parse_command(&message_str) {
-                            Some(Command::Message(message)) => {
-                                if client_registry.broadcast(message.into_bytes(), session_id).await.is_none() {
-                                    client_registry.send_message(session_id, b"Not authenticated\n".to_vec()).await;
-                                };
-                            }
-                            Some(Command::Auth(login, pass)) => {
-                                if let Some(db_pass) = user_db.get(&login) && *db_pass == pass {
-                                    client_registry.authorize_client(session_id, login).await;
-                                } else {
-                                    client_registry.send_message(session_id, b"Invalid data\n".to_vec()).await;
-                                };
-                            },
-                            _ => {
-                                client_registry.send_message(session_id, b"Can't pars command\n".to_vec()).await;
-                                eprintln!("Cant pars command");
-                            }
+                loop {
+                    match decode_frame(&mut pending) {
+                        FrameResult::Complete(frame) => {
+                            if let Some(client_message) = ClientMessage::deserialize(&frame) {
+                                match client_message {
+                                    ClientMessage::Message(message) => {
+                                        if client_registry.broadcast(message.into_bytes(), session_id).await.is_none() {
+                                            client_registry.send_message(session_id, b"Not authenticated\n".to_vec()).await;
+                                        };
+                                    }
+                                    ClientMessage::Auth{login, password} => {
+                                        if let Some(db_pass) = credentials.get(&login) && *db_pass == password {
+                                            client_registry.authorize_client(session_id, login).await;
+                                        } else {
+                                            client_registry.send_message(session_id, b"Invalid data\n".to_vec()).await;
+                                        };
+                                    }
+                                }
+                            };
                         }
-                        
+                        FrameResult::Incomplete => {
+                            break;
+                        }
+                        FrameResult::TooLarge => {
+                            return Err(io::Error::new(io::ErrorKind::InvalidData, "Message too large"));
+                        }
                     }
-                }
-                if pending.len() > MAX_FRAME_SIZE {
-                    client_registry.remove_client(session_id).await;
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "message too large"));
                 }
             },
             _ = &mut shutdown_rx => {
@@ -130,22 +118,9 @@ fn spawn_write_task(mut receiver: Receiver<Arc<Vec<u8>>>, mut write_half: OwnedW
     });
 }
 
-fn set_user_db() -> UserDB {
+fn init_credentials() -> Credentials {
     let mut db = HashMap::new();
     db.insert("Bandera".to_string(), "123123".to_string());
     db.insert("Vlados".to_string(), "123123".to_string());
     Arc::new(db)
-}
-
-fn parse_command(line: &str) -> Option<Command> {
-    let line = line.trim();
-    match line.split_once(' ') {
-        Some(("AUTH", value)) => {
-            let (login, pass) = value.split_once(':')?;
-            Some(Command::Auth(login.to_string(), pass.to_string()))
-        }
-        Some(("MESSAGE", value)) => Some(Command::Message(value.to_string())),
-        Some(_) => None,
-        None => None
-    }
 }
