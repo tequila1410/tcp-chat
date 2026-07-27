@@ -76,6 +76,7 @@ async fn handle_client(stream: TcpStream, client_registry: ClientRegistry, crede
                             if let Some(client_message) = ClientMessage::deserialize(&frame) {
                                 match client_message {
                                     ClientMessage::Message(message) => {
+                                        println!("Client message: {message}");
                                         if let Some(message_from) = client_registry.get_login(session_id).await {
                                             let payload = ServerMessage::Message{from: message_from, text: message}.serialize();
                                             let message = encode_frame(&payload);

@@ -1,96 +1,112 @@
-use std::io::{self, Read, Write, stdin};
-use std::net::TcpStream;
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::io;
 use std::env;
 
-enum Command {
-    Auth(String),
-    Message(String),
-    AuthResponse(String),
-    UnParsed(String),
+use tokio::io::{AsyncWriteExt, AsyncBufReadExt, AsyncReadExt};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::{TcpStream};
+
+use shared::framing::{FrameResult, decode_frame, encode_frame};
+use shared::protocol::{ClientMessage, ServerMessage};
+
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    dotenvy::dotenv().ok();
+    let addr = env::var("CONNECT_ADDR_LOCAL").expect("Connection address must be set");
+    let stream = TcpStream::connect(addr).await?;
+    let (read_half, mut write_half) = stream.into_split();
+
+    spawn_read_task(read_half);
+
+    let stdin = tokio::io::BufReader::new(tokio::io::stdin());
+    let mut lines = stdin.lines();
+
+    while let Some(line) = lines.next_line().await? {
+        handle_message(&mut write_half, &line).await;
+    }
+    Ok(())
 }
 
-fn main() -> io::Result<()> {
-    dotenvy::dotenv().ok();
-
-    let is_loged_in = Arc::new(Mutex::new(false));
-
-    let addr = env::var("CONNECT_ADDR_LOCAL").expect("Connection address must be set");
-    let client = TcpStream::connect(addr)?;
-    let mut read_client = client.try_clone()?;
-
-    let is_loged_in_c = Arc::clone(&is_loged_in);
-    thread::spawn(move || {
+fn spawn_read_task(mut read_half: OwnedReadHalf) {
+    tokio::spawn( async move {
         let mut buffer = [0u8; 1024];
         let mut pending = Vec::new();
+
         loop {
-            let bytes_read = match read_client.read(&mut buffer) {
+            let bytes_read = match read_half.read(&mut buffer).await {
                 Ok(0) => {
                     println!("Server closed connection");
-                    break;
+                    return Ok(());
                 }
                 Ok(n) => n,
                 Err(e) => {
                     eprintln!("Read error: {}", e);
-                    break;
+                    return Err(e);
                 }
             };
-
             pending.extend_from_slice(&buffer[..bytes_read]);
-            while let Some(pos) = pending.iter().position(|&byte| byte == b'\n') {
-                let message = pending.drain(..=pos).collect::<Vec<u8>>();
-                match message_parse(&message) {
-                    Some(message) => {
-                        match message {
-                            Command::AuthResponse(message) => {
-                                let mut is_loged_in_c = is_loged_in_c.lock().unwrap();
-                                *is_loged_in_c = true;
-                                println!("{message}");
-                            },
-                            Command::UnParsed(message) => {
-                                println!("{message}");
+
+            loop {
+                match decode_frame(&mut pending) {
+                    FrameResult::Complete(frame) => {
+                        if let Some(message) = ServerMessage::deserialize(&frame) {
+                            match message {
+                                ServerMessage::Message { from, text } => {
+                                    println!("[{from}]: {text}");
+                                }
+                                ServerMessage::AuthErr(error) => {
+                                    println!("Auth error: {error}");
+                                }
+                                ServerMessage::AuthOk => {
+                                    println!("Authenticated success!");
+                                }
+                                ServerMessage::Err(error) => {
+                                    println!("{error}");
+                                }
                             }
-                            _ => {}
                         }
                     }
-                    None => {
-                        println!("Can't parse command");
+                    FrameResult::TooLarge => {
+                        println!("TooLarge");
+                        break;
                     }
-                };
+                    FrameResult::Incomplete => {
+                        break;
+                    }
+                }
             }
         }
     });
+}
 
-    let mut user_message = String::new();
-    loop {
-        println!("Type text");
-        user_message.clear();
-        stdin().read_line(&mut user_message)?;
-        send_message(&client, &user_message, is_loged_in.clone())?;
+async fn handle_message(write_half: &mut OwnedWriteHalf, user_message: &str) {
+    if user_message.starts_with('/') {
+        handle_command(write_half, user_message).await;
+    } else {
+        let message = ClientMessage::Message(String::from(user_message));
+        let message_bytes = encode_frame(&message.serialize());
+        send_message(write_half, &message_bytes).await;
     }
 }
 
-fn send_message(mut client: &TcpStream, user_message: &str, is_loged_in: Arc<Mutex<bool>>) -> io::Result<()> {
-    // let message: Vec<u8>;
-    // let is_loged_in = is_loged_in.lock().unwrap();
-    // if *is_loged_in {
-    //     message = format!("MESSAGE {user_message}").into_bytes();
-    // } else {
-    //     message = format!("AUTH {user_message}").into_bytes();
-    // }
-    let message = user_message.as_bytes();
-    client.write_all(&message)?;
-    Ok(())
+async fn handle_command(client: &mut OwnedWriteHalf, user_message: &str) {
+    let (command, args) = match user_message.split_once(' ') {
+        Some((cmd, args)) => (cmd, args),
+        None => (user_message, "")
+    };
+    match command {
+        "/login" => {
+            if let Some((login, password)) = args.split_once(' ') {
+                let message = ClientMessage::Auth{login: login.to_string(), password: password.to_string()}.serialize();
+                let message_bytes = encode_frame(&message);
+                send_message(client, &message_bytes).await;
+            }
+        }
+        _ => {}
+    }
 }
 
-fn message_parse(message: &Vec<u8>) -> Option<Command> {
-    if let Ok(message_str) = std::str::from_utf8(message) {
-        return match message_str.split_once(' ') {
-            Some(("AUTH_RESP", value)) => Some(Command::AuthResponse(value.to_string())),
-            Some(("MESSAGE", value)) => Some(Command::Message(value.to_string())),
-            _ => Some(Command::UnParsed(message_str.to_string())),
-        };
-    }
-    None
+async fn send_message(client: &mut OwnedWriteHalf, user_message: &[u8]) {
+    if let Err(err) = client.write_all(user_message).await {
+        eprintln!("Can't send message to server: {err}");
+    };
 }
