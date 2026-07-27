@@ -78,12 +78,92 @@ fn read_bytes(bytes: &[u8], pos: usize) -> Option<(&[u8], usize)> {
 }
 
 pub enum ServerMessage {
-    AuthResponse(String),
+    AuthOk,
+    AuthErr(String),
     Message {
-        form: String,
+        from: String,
         text: String,
     },
-    Error(String),
+    Err(String)
+}
+
+impl ServerMessage {
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut bytes: Vec<u8> = Vec::new();
+        match self {
+            Self::AuthErr(error) => {
+                bytes.push(1);
+
+                let error_length = error.len() as u32;
+                bytes.extend_from_slice(&error_length.to_be_bytes());
+                bytes.extend_from_slice(error.as_bytes());
+            }
+            Self::AuthOk => {
+                bytes.push(2);
+            }
+            Self::Message{from, text} => {
+                bytes.push(3);
+
+                let from_length = from.len() as u32;
+                bytes.extend_from_slice(&from_length.to_be_bytes());
+                bytes.extend_from_slice(from.as_bytes());
+
+                let text_length = text.len() as u32;
+                bytes.extend_from_slice(&text_length.to_be_bytes());
+                bytes.extend_from_slice(text.as_bytes());
+            }
+            Self::Err(error) => {
+                bytes.push(4);
+
+                let error_length = error.len() as u32;
+                bytes.extend_from_slice(&error_length.to_be_bytes());
+                bytes.extend_from_slice(error.as_bytes());
+            }
+        }
+        bytes
+    }
+
+    pub fn deserialize(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 1 {
+            return None;
+        }
+
+        let message_type = bytes[0];
+
+        match message_type {
+            1 => {
+                let (auth_error_bytes, _) = read_bytes(&bytes, 1)?;
+                let error = String::from_utf8(
+                    auth_error_bytes.to_vec()
+                ).ok()?;
+                Some(Self::AuthErr(error))
+            },
+            2 => {
+                Some(Self::AuthOk)
+            }
+            3 => {
+                let (from_bytes, pos) = read_bytes(&bytes, 1)?;
+                let from = String::from_utf8(
+                    from_bytes.to_vec()
+                ).ok()?;
+                
+                let (text_bytes, _) = read_bytes(&bytes, pos)?;
+                let text = String::from_utf8(
+                    text_bytes.to_vec()
+                ).ok()?;
+
+                Some(Self::Message{from, text})
+            }
+            4 => {
+                let (error_bytes, _) = read_bytes(&bytes, 1)?;
+                let error = String::from_utf8(
+                    error_bytes.to_vec()
+                ).ok()?;
+                Some(Self::Err(error))
+            },
+            _ => None
+        }
+    }
 }
 
 #[cfg(test)]

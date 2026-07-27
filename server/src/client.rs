@@ -27,6 +27,11 @@ impl ClientRegistry {
         }
     }
 
+    pub async fn get_login(&self, session_id: SessionId) -> Option<String> {
+        let clients_lock = self.clients.lock().await;
+        clients_lock.get(&session_id).and_then(|client| client.login.clone())
+    }
+
     pub async fn insert_client(&self, sender: mpsc::Sender<Arc<Vec<u8>>>, shutdown: oneshot::Sender<()>) -> SessionId {
         let session_id: SessionId = NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         {
@@ -36,11 +41,11 @@ impl ClientRegistry {
         session_id
     }
 
-    pub async fn broadcast(&self, message_bytes: Vec<u8>, session_id: SessionId) -> Option<()> {
-        let (senders, sender_login) = {
+    pub async fn broadcast(&self, message_bytes: Vec<u8>, session_id: SessionId) {
+        let senders = {
             let clients_lock = self.clients.lock().await;
     
-            let senders = clients_lock
+            clients_lock
                 .iter()
                 .filter_map(|(id, client_handle)| {
                     if client_handle.login.is_some() && *id != session_id {
@@ -52,36 +57,23 @@ impl ClientRegistry {
                         None
                     }
                 })
-                .collect::<Vec<(SessionId, mpsc::Sender<Arc<Vec<u8>>>)>>();
-    
-            let sender_login = clients_lock
-                .get(&session_id)
-                .and_then(|client| client.login.clone());
-    
-            (senders, sender_login)
+                .collect::<Vec<(SessionId, mpsc::Sender<Arc<Vec<u8>>>)>>()
         };
-        
-        if let Some(login) = sender_login {
-            let mut message = format!("[{login}]: ").into_bytes();
-            message.extend_from_slice(&message_bytes);
-            message.push(b'\n');
-            let message_arc = Arc::new(message);
-            for (id, sender) in senders {
-                match sender.try_send(message_arc.clone()) {
-                    Ok(_) => println!("message sent"),
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        println!("Client {id} message full");
-                        self.remove_client(id).await;
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        println!("Client {id} disconnected");
-                        self.remove_client(id).await;
-                    }
-                };
+
+        let message_arc = Arc::new(message_bytes);
+        for (id, sender) in senders {
+            match sender.try_send(message_arc.clone()) {
+                Ok(_) => println!("message sent"),
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    println!("Client {id} message full");
+                    self.remove_client(id).await;
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    println!("Client {id} disconnected");
+                    self.remove_client(id).await;
+                }
             };
-            return Some(());
-        }
-        None
+        };
     }
 
     pub async fn remove_client(&self, session_id: SessionId) {

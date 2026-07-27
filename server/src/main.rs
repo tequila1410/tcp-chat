@@ -6,8 +6,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::{mpsc, oneshot};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
-use shared::framing::{decode_frame, FrameResult};
-use shared::protocol::ClientMessage;
+use shared::framing::{decode_frame, encode_frame, FrameResult};
+use shared::protocol::{ClientMessage, ServerMessage};
 
 mod client;
 
@@ -76,15 +76,23 @@ async fn handle_client(stream: TcpStream, client_registry: ClientRegistry, crede
                             if let Some(client_message) = ClientMessage::deserialize(&frame) {
                                 match client_message {
                                     ClientMessage::Message(message) => {
-                                        if client_registry.broadcast(message.into_bytes(), session_id).await.is_none() {
-                                            client_registry.send_message(session_id, b"Not authenticated\n".to_vec()).await;
-                                        };
+                                        if let Some(message_from) = client_registry.get_login(session_id).await {
+                                            let payload = ServerMessage::Message{from: message_from, text: message}.serialize();
+                                            let message = encode_frame(&payload);
+                                            client_registry.broadcast(message, session_id).await;
+                                        } else {
+                                            let payload = ServerMessage::AuthErr("Not authenticated\n".to_string()).serialize();
+                                            let message = encode_frame(&payload);
+                                            client_registry.send_message(session_id, message.to_vec()).await;
+                                        }
                                     }
                                     ClientMessage::Auth{login, password} => {
                                         if let Some(db_pass) = credentials.get(&login) && *db_pass == password {
                                             client_registry.authorize_client(session_id, login).await;
                                         } else {
-                                            client_registry.send_message(session_id, b"Invalid data\n".to_vec()).await;
+                                            let payload = ServerMessage::Err("Not authenticated\n".to_string()).serialize();
+                                            let message = encode_frame(&payload);
+                                            client_registry.send_message(session_id, message.to_vec()).await;
                                         };
                                     }
                                 }
