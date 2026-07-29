@@ -7,3 +7,4 @@ edition = "2024"
 shared = { path = "../shared" }
 dotenvy = "0.15"
 tokio = { version = "1", features = ["full"] }
+thiserror = "2.0.19"

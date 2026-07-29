@@ -7,6 +7,7 @@ use tokio::net::{TcpStream};
 
 use shared::framing::{FrameResult, decode_frame, encode_frame};
 use shared::protocol::{ClientMessage, ServerMessage};
+use tokio::sync::oneshot;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -14,19 +15,33 @@ async fn main() -> io::Result<()> {
     let addr = env::var("CONNECT_ADDR_LOCAL").expect("Connection address must be set");
     let stream = TcpStream::connect(addr).await?;
     let (read_half, mut write_half) = stream.into_split();
+    let (shutdown_sender, mut sutdown_receiver) = oneshot::channel::<()>();
 
-    spawn_read_task(read_half);
+    spawn_read_task(read_half, shutdown_sender);
 
     let stdin = tokio::io::BufReader::new(tokio::io::stdin());
     let mut lines = stdin.lines();
 
-    while let Some(line) = lines.next_line().await? {
-        handle_message(&mut write_half, &line).await;
+    loop {
+        tokio::select! {
+            lines = lines.next_line() => {
+                match lines? {
+                    Some(line) => {
+                        handle_message(&mut write_half, &line).await;
+                    }
+                    None => {
+                        return Ok(());
+                    }
+                }
+            }
+            _ = &mut sutdown_receiver => {
+                return Ok(());
+            }
+        }
     }
-    Ok(())
 }
 
-fn spawn_read_task(mut read_half: OwnedReadHalf) {
+fn spawn_read_task(mut read_half: OwnedReadHalf, shutdown_sender: oneshot::Sender<()>) {
     tokio::spawn( async move {
         let mut buffer = [0u8; 1024];
         let mut pending = Vec::new();
@@ -35,11 +50,13 @@ fn spawn_read_task(mut read_half: OwnedReadHalf) {
             let bytes_read = match read_half.read(&mut buffer).await {
                 Ok(0) => {
                     println!("Server closed connection");
+                    let _ = &shutdown_sender.send(());
                     return Ok(());
                 }
                 Ok(n) => n,
                 Err(e) => {
                     eprintln!("Read error: {}", e);
+                    let _ = &shutdown_sender.send(());
                     return Err(e);
                 }
             };
@@ -62,12 +79,27 @@ fn spawn_read_task(mut read_half: OwnedReadHalf) {
                                 ServerMessage::Err(error) => {
                                     println!("{error}");
                                 }
+                                ServerMessage::RoomCreated(tip) => {
+                                    println!("{tip}");
+                                }
+                                ServerMessage::RoomJoined(tip) => {
+                                    println!("{tip}");
+                                }
+                                ServerMessage::RoomsGet(rooms) => {
+                                    println!("Rooms list: {rooms:?}");
+                                }
+                                ServerMessage::RoomErr(err) => {
+                                    println!("{err}");
+                                }
                             }
+                        } else {
+                            println!("Can't deserialize frame");
                         }
                     }
                     FrameResult::TooLarge => {
-                        println!("TooLarge");
-                        break;
+                        println!("Message too large");
+                        let _ = &shutdown_sender.send(());
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, "Message too large"));
                     }
                     FrameResult::Incomplete => {
                         break;
@@ -99,7 +131,24 @@ async fn handle_command(client: &mut OwnedWriteHalf, user_message: &str) {
                 let message = ClientMessage::Auth{login: login.to_string(), password: password.to_string()}.serialize();
                 let message_bytes = encode_frame(&message);
                 send_message(client, &message_bytes).await;
+            } else {
+                println!("Usage: /login <login> <password>");
             }
+        }
+        "/rooms" => {
+            let message = ClientMessage::GetRooms.serialize();
+            let message_bytes = encode_frame(&message);
+            send_message(client, &message_bytes).await;
+        }
+        "/create_room" => {
+            let message = ClientMessage::CreateRoom(args.to_string()).serialize();
+            let message_bytes = encode_frame(&message);
+            send_message(client, &message_bytes).await;
+        }
+        "/join" => {
+            let message = ClientMessage::JoinRoom(args.to_string()).serialize();
+            let message_bytes = encode_frame(&message);
+            send_message(client, &message_bytes).await;
         }
         _ => {}
     }

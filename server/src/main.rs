@@ -10,8 +10,11 @@ use shared::framing::{decode_frame, encode_frame, FrameResult};
 use shared::protocol::{ClientMessage, ServerMessage};
 
 mod client;
+mod room;
 
 use crate::client::{ClientRegistry, SessionId};
+use crate::room::memory::MemoryRoomStorage;
+use crate::room::{RoomManager, RoomStorage};
 
 type Credentials = Arc<HashMap<String, String>>;
 
@@ -21,6 +24,7 @@ async fn main() -> io::Result<()> {
 
     let listener = TcpListener::bind("127.0.0.1:1313").await?;
     let client_registry = ClientRegistry::new();
+    let room_manager: RoomManager<MemoryRoomStorage> = RoomManager::new();
 
     loop {
         let (stream, _) = match listener.accept().await {
@@ -33,15 +37,16 @@ async fn main() -> io::Result<()> {
 
         let credentials = Arc::clone(&credentials);
         let client_registry= client_registry.clone();
+        let room_manager = room_manager.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_client(stream, client_registry, credentials).await {
+            if let Err(error) = handle_client(stream, client_registry, room_manager, credentials).await {
                 eprintln!("Client error: {error}");
             }
         });
     }
 }
 
-async fn handle_client(stream: TcpStream, client_registry: ClientRegistry, credentials: Credentials) -> io::Result<()> {
+async fn handle_client<S: RoomStorage>(stream: TcpStream, client_registry: ClientRegistry, room_manager: RoomManager<S>, credentials: Credentials) -> io::Result<()> {
     let (sender, receiver) = mpsc::channel::<Arc<Vec<u8>>>(32);
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
 
@@ -90,14 +95,73 @@ async fn handle_client(stream: TcpStream, client_registry: ClientRegistry, crede
                                     ClientMessage::Auth{login, password} => {
                                         if let Some(db_pass) = credentials.get(&login) && *db_pass == password {
                                             client_registry.authorize_client(session_id, login).await;
+                                            let payload = ServerMessage::AuthOk.serialize();
+                                            let message = encode_frame(&payload);
+                                            client_registry.send_message(session_id, message.to_vec()).await;
                                         } else {
                                             let payload = ServerMessage::Err("Not authenticated\n".to_string()).serialize();
                                             let message = encode_frame(&payload);
                                             client_registry.send_message(session_id, message.to_vec()).await;
                                         };
                                     }
+                                    ClientMessage::CreateRoom(room_name) => {
+                                        if let Some(_) = client_registry.get_login(session_id).await {
+                                            match room_manager.create_room(room_name).await {
+                                                Ok(_) => {
+                                                    let payload = ServerMessage::RoomCreated("Room successfuly created".to_string()).serialize();
+                                                    let message = encode_frame(&payload);
+                                                    client_registry.send_message(session_id, message.to_vec()).await;
+                                                }
+                                                Err(_) => {
+                                                    let payload = ServerMessage::RoomErr("Room already exist\n".to_string()).serialize();
+                                                    let message = encode_frame(&payload);
+                                                    client_registry.send_message(session_id, message.to_vec()).await;
+                                                }
+                                            };
+                                        } else {
+                                            let payload = ServerMessage::AuthErr("Not authenticated\n".to_string()).serialize();
+                                            let message = encode_frame(&payload);
+                                            client_registry.send_message(session_id, message.to_vec()).await;
+                                        }
+                                    }
+                                    ClientMessage::JoinRoom(room_name) => {
+                                        if let Some(_) = client_registry.get_login(session_id).await {
+                                            match room_manager.join_room(room_name, session_id).await {
+                                                Ok(_) => {
+                                                    let payload = ServerMessage::RoomJoined("Room successfuly joined".to_string()).serialize();
+                                                    let message = encode_frame(&payload);
+                                                    client_registry.send_message(session_id, message.to_vec()).await;
+                                                }
+                                                Err(_) => {
+                                                    let payload = ServerMessage::RoomErr("No room with this name\n".to_string()).serialize();
+                                                    let message = encode_frame(&payload);
+                                                    client_registry.send_message(session_id, message.to_vec()).await;
+                                                }
+                                            };
+                                        } else {
+                                            let payload = ServerMessage::AuthErr("Not authenticated\n".to_string()).serialize();
+                                            let message = encode_frame(&payload);
+                                            client_registry.send_message(session_id, message.to_vec()).await;
+                                        }
+                                    }
+                                    ClientMessage::GetRooms => {
+                                        if let Some(_) = client_registry.get_login(session_id).await {
+                                            match room_manager.get_rooms().await {
+                                                Ok(rooms) => {
+                                                    let payload = ServerMessage::RoomsGet(rooms).serialize();
+                                                    let message = encode_frame(&payload);
+                                                    client_registry.send_message(session_id, message.to_vec()).await;
+                                                }
+                                                Err(err) => {
+                                                    println!("Creating room error: {err:?}");
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
-                            };
+                            } else {
+                                println!("Can't deserialize frame");
+                            }
                         }
                         FrameResult::Incomplete => {
                             break;
