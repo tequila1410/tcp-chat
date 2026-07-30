@@ -35,20 +35,20 @@ impl ClientRegistry {
     pub async fn insert_client(&self, sender: mpsc::Sender<Arc<Vec<u8>>>, shutdown: oneshot::Sender<()>) -> SessionId {
         let session_id: SessionId = NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         {
-            let mut locked_clients = self.clients.lock().await;
-            locked_clients.insert(session_id, Client { login: None, sender, shutdown });
+            let mut clients_lock = self.clients.lock().await;
+            clients_lock.insert(session_id, Client { login: None, sender, shutdown });
         }
         session_id
     }
 
-    pub async fn broadcast(&self, message_bytes: Vec<u8>, session_id: SessionId) {
+    pub async fn send_many(&self, message_bytes: Vec<u8>, message_to: Vec<SessionId>) {
         let senders = {
             let clients_lock = self.clients.lock().await;
     
             clients_lock
                 .iter()
                 .filter_map(|(id, client_handle)| {
-                    if client_handle.login.is_some() && *id != session_id {
+                    if message_to.contains(id) {
                         Some((
                             *id,
                             client_handle.sender.clone()
@@ -59,7 +59,6 @@ impl ClientRegistry {
                 })
                 .collect::<Vec<(SessionId, mpsc::Sender<Arc<Vec<u8>>>)>>()
         };
-
         let message_arc = Arc::new(message_bytes);
         for (id, sender) in senders {
             match sender.try_send(message_arc.clone()) {
@@ -84,8 +83,8 @@ impl ClientRegistry {
     }
 
     pub async fn send_message(&self, session_id: SessionId, message_bytes: Vec<u8>) {
-        let mut client_lock = self.clients.lock().await;
-        if let Some(client) = client_lock.get_mut(&session_id) {
+        let mut clients_lock = self.clients.lock().await;
+        if let Some(client) = clients_lock.get_mut(&session_id) {
             let _ = client.sender.try_send(Arc::new(message_bytes));
         }
     }
@@ -96,4 +95,10 @@ impl ClientRegistry {
             client.login = Some(login);
         }
     }
+
+    pub async fn is_client_authorized(&self, session_id: SessionId) -> bool {
+        let clients_lock = self.clients.lock().await;
+        clients_lock.get(&session_id).is_some_and(|client| client.login.is_some())
+    }
+
 }

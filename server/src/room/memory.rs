@@ -18,54 +18,68 @@ impl MemoryRoomStorage {
 }
 
 impl RoomStorage for MemoryRoomStorage {
-    async fn create_room(&self, name: String) -> Result<(), super::RoomError> {
+    async fn create_room(&self, room_name: String) -> Result<(), super::RoomError> {
         let mut rooms = self.rooms.write().await;
 
-        if rooms.contains_key(&name) {
-            let error_message = format!("Room name {name} exist");
+        if rooms.contains_key(&room_name) {
+            let error_message = format!("Room name {room_name} exist");
             return Err(RoomError::AlreadyExist(error_message));
         }
 
-        rooms.insert(name, Room { clients: vec![] });
+        rooms.insert(room_name, Room { clients: vec![] });
 
         Ok(())
     }
 
-    async fn join_room(&self, name: String, session_id: SessionId) -> Result<(), RoomError> {
+    async fn join_room(&self, room_name: String, session_id: SessionId) -> Result<(), RoomError> {
         let mut rooms = self.rooms.write().await;
-        match rooms.get_mut(&name) {
+        match rooms.get_mut(&room_name) {
             Some(room) => {
                 room.clients.push(session_id);
                 Ok(())
             }
             None => {
-                let error_message = format!("Can't find room {name}");
+                let error_message = format!("Can't find room {room_name}");
                 Err(RoomError::NotFound(error_message))
             }
         }
     }
 
-    async fn get_room_members(&self, name: String) -> Result<Vec<SessionId>, RoomError> {
+    async fn get_room_members(&self, room_name: String) -> Result<Vec<SessionId>, RoomError> {
         let rooms = self.rooms.read().await;
-        match rooms.get(&name) {
+        match rooms.get(&room_name) {
             Some(room) => {
                 // need optimization if clients in room will be more
                 let clients = room.clients.clone();
                 Ok(clients)
             }
             None => {
-                let error_message = format!("Can't find room {name}");
+                let error_message = format!("Can't find room {room_name}");
                 Err(RoomError::NotFound(error_message))
             }
         }
     }
 
-    async fn delete_room(&self, name: String) -> Result<(), RoomError> {
+    async fn recipients_for(&self, room_name: &str, session_id: SessionId) -> Result<Vec<SessionId>, RoomError> {
+        let rooms = self.rooms.read().await;
+        if let Some(room) = rooms.get(room_name) {
+            if room.clients.contains(&session_id) {
+                let clients = room.clients.clone().into_iter().filter(|client| *client != session_id).collect::<Vec<SessionId>>();
+                return Ok(clients);
+            } else {
+                return Err(RoomError::NotMember(session_id.to_string()));
+            }
+        } else {
+            return Err(RoomError::NotFound(room_name.to_string()));
+        }
+    }
+
+    async fn delete_room(&self, room_name: String) -> Result<(), RoomError> {
         let mut rooms = self.rooms.write().await;
-        match rooms.remove(&name) {
+        match rooms.remove(&room_name) {
             Some(_) => Ok(()),
             None => {
-                let error_message = format!("Can't find room {name}");
+                let error_message = format!("Can't find room {room_name}");
                 Err(RoomError::NotFound(error_message))
             }
         }

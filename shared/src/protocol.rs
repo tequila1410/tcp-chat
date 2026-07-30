@@ -4,10 +4,14 @@ pub enum ClientMessage {
         login: String,
         password: String,
     },
-    Message(String),
+
     CreateRoom(String),
     JoinRoom(String),
-    GetRooms
+    GetRooms,
+    SendToRoom {
+        room: String,
+        text: String,
+    },
 }
 
 impl ClientMessage {
@@ -25,13 +29,6 @@ impl ClientMessage {
                 bytes.extend_from_slice(&pass_length.to_be_bytes());
                 bytes.extend_from_slice(password.as_bytes());
             }
-            ClientMessage::Message(message) => {
-                bytes.push(2);
-
-                let message_length = message.len() as u32;
-                bytes.extend_from_slice(&message_length.to_be_bytes());
-                bytes.extend_from_slice(message.as_bytes());
-            }
             ClientMessage::CreateRoom(room_name) => {
                 bytes.push(3);
 
@@ -48,6 +45,17 @@ impl ClientMessage {
             }
             ClientMessage::GetRooms => {
                 bytes.push(5);
+            }
+            ClientMessage::SendToRoom { room, text } => {
+                bytes.push(6);
+
+                let room_length = room.len() as u32;
+                bytes.extend_from_slice(&room_length.to_be_bytes());
+                bytes.extend_from_slice(room.as_bytes());
+
+                let text_length = text.len() as u32;
+                bytes.extend_from_slice(&text_length.to_be_bytes());
+                bytes.extend_from_slice(text.as_bytes());
             }
         }
         bytes
@@ -73,13 +81,6 @@ impl ClientMessage {
                 ).ok()?;
                 Some(Self::Auth{ login, password })
             },
-            2 => {
-                let (message_bytes, _) = read_bytes(&bytes, 1)?;
-                let message = String::from_utf8(
-                    message_bytes.to_vec()
-                ).ok()?;
-                Some(Self::Message(message))
-            }
             3 => {
                 let (message_bytes, _) = read_bytes(&bytes, 1)?;
                 let message = String::from_utf8(
@@ -96,6 +97,18 @@ impl ClientMessage {
             }
             5 => {
                 Some(Self::GetRooms)
+            }
+            6 => {
+                let (room_bytes, pos) = read_bytes(&bytes, 1)?;
+                let room = String::from_utf8(
+                    room_bytes.to_vec()
+                ).ok()?;
+
+                let (text_bytes, _) = read_bytes(&bytes, pos)?;
+                let text = String::from_utf8(
+                    text_bytes.to_vec()
+                ).ok()?;
+                Some(Self::SendToRoom { room, text })
             }
             _ => None
         }
@@ -114,10 +127,12 @@ fn read_bytes(bytes: &[u8], pos: usize) -> Option<(&[u8], usize)> {
     Some((bytes_slice, pos + 4 + text_len))
 }
 
+#[derive(Debug, PartialEq)]
 pub enum ServerMessage {
     AuthOk,
     AuthErr(String),
     Message {
+        room: String,
         from: String,
         text: String,
     },
@@ -143,8 +158,12 @@ impl ServerMessage {
             Self::AuthOk => {
                 bytes.push(2);
             }
-            Self::Message{from, text} => {
+            Self::Message{room, from, text} => {
                 bytes.push(3);
+
+                let room_length = room.len() as u32;
+                bytes.extend_from_slice(&room_length.to_be_bytes());
+                bytes.extend_from_slice(room.as_bytes());
 
                 let from_length = from.len() as u32;
                 bytes.extend_from_slice(&from_length.to_be_bytes());
@@ -198,7 +217,6 @@ impl ServerMessage {
         }
 
         let message_type = bytes[0];
-        println!("message_type {message_type}");
 
         match message_type {
             1 => {
@@ -212,7 +230,12 @@ impl ServerMessage {
                 Some(Self::AuthOk)
             }
             3 => {
-                let (from_bytes, pos) = read_bytes(&bytes, 1)?;
+                let (room_bytes, pos) = read_bytes(&bytes, 1)?;
+                let room = String::from_utf8(
+                    room_bytes.to_vec()
+                ).ok()?;
+
+                let (from_bytes, pos) = read_bytes(&bytes, pos)?;
                 let from = String::from_utf8(
                     from_bytes.to_vec()
                 ).ok()?;
@@ -222,7 +245,7 @@ impl ServerMessage {
                     text_bytes.to_vec()
                 ).ok()?;
 
-                Some(Self::Message{from, text})
+                Some(Self::Message{room, from, text})
             }
             4 => {
                 let (error_bytes, _) = read_bytes(&bytes, 1)?;
@@ -324,6 +347,33 @@ mod tests {
 
         let bytes = message.serialize();
         let deserialized = ClientMessage::deserialize(&bytes).unwrap();
+
+        assert_eq!(message, deserialized);
+    }
+
+    #[test]
+    fn send_to_room_round_trip() {
+        let message = ClientMessage::SendToRoom {
+            room: "rust".to_string(),
+            text: "test message".to_string(),
+        };
+
+        let bytes = message.serialize();
+        let deserialized = ClientMessage::deserialize(&bytes).unwrap();
+
+        assert_eq!(message, deserialized);
+    }
+
+    #[test]
+    fn message_round_trip() {
+        let message = ServerMessage::Message {
+            room: "rust".to_string(),
+            from: "Vlados".to_string(),
+            text: "test message".to_string(),
+        };
+
+        let bytes = message.serialize();
+        let deserialized = ServerMessage::deserialize(&bytes).unwrap();
 
         assert_eq!(message, deserialized);
     }

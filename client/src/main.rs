@@ -67,8 +67,8 @@ fn spawn_read_task(mut read_half: OwnedReadHalf, shutdown_sender: oneshot::Sende
                     FrameResult::Complete(frame) => {
                         if let Some(message) = ServerMessage::deserialize(&frame) {
                             match message {
-                                ServerMessage::Message { from, text } => {
-                                    println!("[{from}]: {text}");
+                                ServerMessage::Message { room, from, text } => {
+                                    println!("[{room}] [{from}]: {text}");
                                 }
                                 ServerMessage::AuthErr(error) => {
                                     println!("Auth error: {error}");
@@ -114,9 +114,10 @@ async fn handle_message(write_half: &mut OwnedWriteHalf, user_message: &str) {
     if user_message.starts_with('/') {
         handle_command(write_half, user_message).await;
     } else {
-        let message = ClientMessage::Message(String::from(user_message));
-        let message_bytes = encode_frame(&message.serialize());
-        send_message(write_half, &message_bytes).await;
+        // let message = ClientMessage::Message(String::from(user_message));
+        // let message_bytes = encode_frame(&message.serialize());
+        // send_message(write_half, &message_bytes).await;
+        println!("use commands!");
     }
 }
 
@@ -149,6 +150,15 @@ async fn handle_command(client: &mut OwnedWriteHalf, user_message: &str) {
             let message = ClientMessage::JoinRoom(args.to_string()).serialize();
             let message_bytes = encode_frame(&message);
             send_message(client, &message_bytes).await;
+        }
+        "/room" => {
+            if let Some((room, text)) = args.split_once(' ') {
+                let message = ClientMessage::SendToRoom { room: room.to_string(), text: text.to_string() }.serialize();
+                let message_bytes = encode_frame(&message);
+                send_message(client, &message_bytes).await;
+            } else {
+                println!("Usage: /room <room_name> <message_text>");
+            }
         }
         _ => {}
     }

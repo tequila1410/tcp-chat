@@ -10,6 +10,7 @@ pub trait RoomStorage {
     async fn get_rooms(&self) -> Result<Vec<String>, RoomError>;
     async fn join_room(&self, name: String, session_id: SessionId) -> Result<(), RoomError>;
     async fn get_room_members(&self, name: String) -> Result<Vec<SessionId>, RoomError>;
+    async fn recipients_for(&self, name: &str, session_id: SessionId) -> Result<Vec<SessionId>, RoomError>;
 }
 
 pub struct RoomManager<S: RoomStorage> {
@@ -36,6 +37,14 @@ impl<S: RoomStorage> RoomManager<S> {
     pub async fn get_rooms(&self) -> Result<Vec<String>, RoomError> {
         self.storage.get_rooms().await
     }
+
+    pub async fn get_room_members(&self, name: String) -> Result<Vec<SessionId>, RoomError> {
+        self.storage.get_room_members(name).await
+    }
+
+    pub async fn recipients_for(&self, name: &str, session_id: SessionId) -> Result<Vec<SessionId>, RoomError> {
+        self.storage.recipients_for(name, session_id).await
+    }
 }
 
 impl RoomManager<MemoryRoomStorage> {
@@ -57,5 +66,7 @@ pub enum RoomError {
     #[error("room already exist: {0}")]
     AlreadyExist(String),
     #[error("storage error: {0}")]
-    StorageError(String)
+    StorageError(String),
+    #[error("user not exist: {0}")]
+    NotMember(String),
 }
