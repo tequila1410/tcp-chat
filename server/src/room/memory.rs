@@ -90,4 +90,12 @@ impl RoomStorage for MemoryRoomStorage {
         let room_names = rooms.keys().cloned().collect();
         Ok(room_names)
     }
+
+    async fn leave_all(&self, session_id: SessionId) {
+        let mut rooms = self.rooms.write().await;
+        rooms.iter_mut().for_each(|(_, room)| {
+            room.clients.retain(|id| *id != session_id);
+        });
+    }
+
 }

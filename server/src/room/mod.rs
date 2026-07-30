@@ -11,6 +11,7 @@ pub trait RoomStorage {
     async fn join_room(&self, name: String, session_id: SessionId) -> Result<(), RoomError>;
     async fn get_room_members(&self, name: String) -> Result<Vec<SessionId>, RoomError>;
     async fn recipients_for(&self, name: &str, session_id: SessionId) -> Result<Vec<SessionId>, RoomError>;
+    async fn leave_all(&self, session_id: SessionId);
 }
 
 pub struct RoomManager<S: RoomStorage> {
@@ -44,6 +45,10 @@ impl<S: RoomStorage> RoomManager<S> {
 
     pub async fn recipients_for(&self, name: &str, session_id: SessionId) -> Result<Vec<SessionId>, RoomError> {
         self.storage.recipients_for(name, session_id).await
+    }
+
+    pub async fn leave_all(&self, session_id: SessionId) {
+        self.storage.leave_all(session_id).await;
     }
 }
 

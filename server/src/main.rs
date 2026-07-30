@@ -67,12 +67,12 @@ async fn handle_client<S: RoomStorage>(stream: TcpStream, client_registry: Clien
                 let bytes_read = match result {
                     Ok(0) => {
                         println!("Client disconnected: {session_id}");
-                        client_registry.remove_client(session_id).await;
+                        disconnect(&client_registry, &room_manager, session_id).await;
                         return Ok(());
                     }
                     Ok(n) => n,
                     Err(error) => {
-                        client_registry.remove_client(session_id).await;
+                        disconnect(&client_registry, &room_manager, session_id).await;
                         return Err(error);
                     }
                 };
@@ -106,6 +106,7 @@ async fn handle_client<S: RoomStorage>(stream: TcpStream, client_registry: Clien
                             break;
                         }
                         FrameResult::TooLarge => {
+                            disconnect(&client_registry, &room_manager, session_id).await;
                             return Err(io::Error::new(io::ErrorKind::InvalidData, "Message too large"));
                         }
                     }
@@ -113,6 +114,7 @@ async fn handle_client<S: RoomStorage>(stream: TcpStream, client_registry: Clien
             },
             _ = &mut shutdown_rx => {
                 println!("Shutdown signal for {session_id}");
+                room_manager.leave_all(session_id).await;
                 return Ok(());
             }
         }
@@ -128,4 +130,9 @@ fn spawn_write_task(mut receiver: Receiver<Arc<Vec<u8>>>, mut write_half: OwnedW
             }
         }
     });
+}
+
+async fn disconnect<S: RoomStorage>(client_registry: &ClientRegistry, room_manager: &RoomManager<S>, session_id: SessionId) {
+    room_manager.leave_all(session_id).await;
+    client_registry.remove_client(session_id).await;
 }
