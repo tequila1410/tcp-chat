@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use shared::{framing::encode_frame, protocol::ServerMessage};
 use tokio::sync::{Mutex, oneshot, mpsc};
 
 pub type SessionId = u64;
@@ -89,6 +90,12 @@ impl ClientRegistry {
         }
     }
 
+    pub async fn reply(&self, session_id: SessionId, msg: ServerMessage) {
+        let payload = msg.serialize();
+        let message = encode_frame(&payload);
+        self.send_message(session_id, message).await;
+    }
+
     pub async fn authorize_client(&self, session_id: SessionId, login: String) {
         let mut client_lock = self.clients.lock().await;
         if let Some(client) = client_lock.get_mut(&session_id) {
@@ -97,8 +104,11 @@ impl ClientRegistry {
     }
 
     pub async fn is_client_authorized(&self, session_id: SessionId) -> bool {
-        let clients_lock = self.clients.lock().await;
-        clients_lock.get(&session_id).is_some_and(|client| client.login.is_some())
+        let client_lock = self.clients.lock().await;
+        if let Some(client) = client_lock.get(&session_id) {
+            return client.login.is_some();
+        }
+        return false;
     }
 
 }

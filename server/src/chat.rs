@@ -14,14 +14,10 @@ pub async fn send_to_room<S: RoomStorage>(client_registry: &ClientRegistry, room
                 client_registry.send_many(message, message_to).await;
             }
             Err(error) => {
-                let payload = ServerMessage::RoomErr(error.to_string()).serialize();
-                let message = encode_frame(&payload);
-                client_registry.send_message(session_id, message.to_vec()).await;
+                client_registry.reply(session_id,  ServerMessage::RoomErr(error.to_string())).await;
             }
         }
     } else {
-        let payload = ServerMessage::AuthErr("Not authenticated\n".to_string()).serialize();
-        let message = encode_frame(&payload);
-        client_registry.send_message(session_id, message.to_vec()).await;
+        client_registry.reply(session_id,  ServerMessage::AuthErr("Not authenticated\n".to_string())).await;
     }
 }
