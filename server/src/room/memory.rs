@@ -17,6 +17,7 @@ impl MemoryRoomStorage {
     }
 }
 
+#[async_trait::async_trait]
 impl RoomStorage for MemoryRoomStorage {
     async fn create_room(&self, room_name: String) -> Result<(), super::RoomError> {
         let mut rooms = self.rooms.write().await;

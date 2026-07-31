@@ -4,14 +4,27 @@ use std::sync::Arc;
 
 use crate::{client::SessionId, room::memory::MemoryRoomStorage};
 
-pub trait RoomStorage {
+/// Async storage port. Futures must be `Send` so callers can `tokio::spawn` work that uses rooms.
+#[async_trait::async_trait]
+pub trait RoomStorage: Send + Sync {
     async fn create_room(&self, name: String) -> Result<(), RoomError>;
     async fn delete_room(&self, name: String) -> Result<(), RoomError>;
     async fn get_rooms(&self) -> Result<Vec<String>, RoomError>;
-    async fn join_room(&self, name: String, session_id: SessionId) -> Result<(), RoomError>;
-    async fn get_room_members(&self, name: String) -> Result<Vec<SessionId>, RoomError>;
-    async fn recipients_for(&self, name: &str, session_id: SessionId) -> Result<Vec<SessionId>, RoomError>;
-    async fn leave_all(&self, session_id: SessionId);
+    async fn join_room(
+        &self,
+        name: String,
+        session_id: SessionId,
+    ) -> Result<(), RoomError>;
+    async fn get_room_members(
+        &self,
+        name: String,
+    ) -> Result<Vec<SessionId>, RoomError>;
+    async fn recipients_for(
+        &self,
+        name: &str,
+        session_id: SessionId,
+    ) -> Result<Vec<SessionId>, RoomError>;
+    async fn leave_all(&self, session_id: SessionId) -> ();
 }
 
 pub struct RoomManager<S: RoomStorage> {
