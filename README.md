@@ -1,113 +1,125 @@
 # Rust TCP Chat
 
-A TCP chat server built with Rust and Tokio async runtime.
+Async TCP chat built with **Rust** and **Tokio**.
 
-This project is part of my Rust backend learning journey.
-The goal is to understand async networking, ownership, concurrency, and protocol design.
+Learning project focused on backend networking: framing, a custom binary protocol, concurrency, and in-memory rooms.
 
 ---
 
 ## Features
 
-- Multiple concurrent clients via Tokio async tasks
-- Line-based text protocol (`AUTH`, `MESSAGE`)
-- Message broadcasting to all authenticated clients
-- TCP message framing with max frame size protection
-- Graceful client disconnect and forced eviction (slow clients)
-- Shared client registry using `Arc<Mutex<_>>`
-- Workspace structure: `server`, `client`, `shared`
+- Concurrent clients (one Tokio task per connection)
+- Length-prefixed TCP framing with a max frame size
+- Custom binary protocol shared between server and client
+- Login / password authentication
+- Chat rooms: create, join, list, send messages to a room
+- Slow-client protection (bounded write queue; full queue → disconnect)
 
 ---
 
-## Project Structure
+## Requirements
 
-```
-test-tcp/
- ├── Cargo.toml          # workspace root
- ├── server/
- │    ├── Cargo.toml
- │    └── src/
- │         ├── main.rs   # connection handling, protocol parsing
- │         └── client.rs # ClientRegistry, Client
- ├── client/
- │    ├── Cargo.toml
- │    └── src/
- │         └── main.rs
- └── shared/
-      ├── Cargo.toml
-      └── src/
-           └── lib.rs    # shared protocol types (WIP)
-```
+- [Rust](https://rustup.rs/) (edition 2024 toolchain)
 
 ---
 
-## Protocol
+## Quick start
 
-**Client → Server:**
-```
-AUTH login:password\n
-MESSAGE text\n
-```
+Clone the repo and create a `.env` in the workspace root (or copy from a package example):
 
-**Server → Client:**
-```
-MESSAGE [login]: text\n
-ERROR reason\n
+```bash
+cp server/.env.example .env
 ```
 
----
+Default address:
 
-## Getting Started
+```env
+CONNECT_ADDR_LOCAL=127.0.0.1:1313
+```
 
-Run the server:
+Start the server:
 
 ```bash
 cargo run -p server
 ```
 
-Run a client:
+In another terminal, start a client:
 
 ```bash
 cargo run -p client
 ```
 
-Open multiple terminals to connect several clients.
+Open more terminals with `cargo run -p client` to chat with several users.
+
+### Demo accounts
+
+Credentials are hardcoded for local experiments:
+
+| Login   | Password |
+|---------|----------|
+| `Oliver`  | `123123` |
+| `Emma` | `123123` |
 
 ---
 
-## Technologies
+## Client commands
 
-- Rust
-- Tokio (async runtime)
-- `Arc<Mutex<_>>` for shared state
-- `mpsc` channels for per-client write tasks
-- `oneshot` channels for shutdown signaling
+Messages are sent as slash-commands:
 
----
+```text
+/login <login> <password>
+/rooms
+/create_room <name>
+/join <name>
+/room <name> <text>
+```
 
-## Roadmap
+Example session:
 
-- [x] TCP server
-- [x] Multiple clients
-- [x] Broadcast messages
-- [x] Message framing
-- [x] Tokio async runtime
-- [x] User authentication
-- [x] Workspace structure
-- [x] ClientRegistry abstraction
-- [ ] Shared protocol crate
-- [ ] Client binary
-- [ ] Structured logging (tracing)
-- [ ] Private messages
-- [ ] Rooms
+```text
+/login Oliver 123123
+/create_room rust
+/join rust
+/room rust hello from Oliver
+```
 
 ---
 
-## Learning Goals
+## Project layout
 
-- Ownership and borrowing in async context
-- Tokio tasks, channels, select!
-- TCP networking and message framing
-- Shared mutable state across async tasks
-- Workspace and crate organization
-- Protocol design
+```text
+tcp-chat/
+├── server/     # TCP chat server
+├── client/     # CLI client
+├── shared/     # Framing + protocol types
+└── roadmap.md  # Development plan (learning path)
+```
+
+| Crate    | Role |
+|----------|------|
+| `server` | Accept connections, auth, rooms, fan-out |
+| `client` | Interactive CLI over the same protocol |
+| `shared` | Frame encode/decode and message types |
+
+---
+
+## Protocol (overview)
+
+Wire format is **binary**, not line-based text:
+
+1. **Frame:** `u32` big-endian length + payload (max payload ~8 KiB)
+2. **Payload:** message type byte + length-prefixed fields
+
+Client → server includes auth, room management, and `SendToRoom`.  
+Server → client includes auth results, room events, and room messages.
+
+See `shared/src/protocol.rs` and `shared/src/framing.rs` for the exact layout.
+
+---
+
+## Stack
+
+- Rust / Tokio
+- `mpsc` channels for per-client writes
+- `Arc` + `Mutex` / `RwLock` for shared in-memory state
+- Workspace crates: `server`, `client`, `shared`

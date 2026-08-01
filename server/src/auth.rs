@@ -18,7 +18,7 @@ pub async fn authenticate(client_registry: &ClientRegistry, session_id: SessionI
 
 pub fn init_credentials() -> Credentials {
     let mut db = HashMap::new();
-    db.insert("Bandera".to_string(), "123123".to_string());
-    db.insert("Vlados".to_string(), "123123".to_string());
+    db.insert("Oliver".to_string(), "123123".to_string());
+    db.insert("Emma".to_string(), "123123".to_string());
     Arc::new(db)
 }
