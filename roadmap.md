@@ -22,7 +22,7 @@ Already in place:
 - CLI client with slash commands
 - Workspace: `server` / `client` / `shared`
 
-Known gaps (see audit): god-object registry, weak tests, README/protocol drift (1.3–1.5).
+Known gaps (see audit): god-object registry, weak tests, README/protocol drift (1.4–1.5).
 
 ---
 
@@ -34,7 +34,7 @@ Stabilize correctness of connections, rooms, and delivery.
 |---|------|-----|-----------|
 | 1.1 | ✅ Single disconnect path for all exit reasons (EOF, read error, frame too large, write failure, slow client) | Ghost sessions / room members | One function owns cleanup; write-task death triggers it |
 | 1.2 | ✅ Room membership invariants (no duplicate joins; explicit leave; single-room + switch) | Broken fanout and leave | Documented rules + storage/protocol match them |
-| 1.3 | Align unicast and broadcast delivery (`reply` / `send_message` vs `send_many` on Full/Closed) | Auth/room acks can be silently dropped | Same eviction/error policy on both paths |
+| 1.3 | ✅ Align unicast and broadcast delivery (`reply` / `send_message` vs `send_many` on Full/Closed) | Auth/room acks can be silently dropped | Same eviction/error policy on both paths |
 | 1.4 | Sync project map: update README to real protocol/modules; archive or remove legacy `src/bin/*` | Mental model drift | README matches code; dead bins don't confuse |
 | 1.5 | Unit tests for `MemoryRoomStorage` + auth decisions (no TCP) | Regressions on every change | create/join/recipients/leave/leave_all/duplicates/switch covered |
 
@@ -52,6 +52,15 @@ Contract for `MemoryRoomStorage` / room handlers. Storage keeps two indexes in s
 6. **Leave** (no room name) → not in any room. Domain outcome: `Left` | `WasNotMember` (not an error). Wire: both map to `RoomLeft` (idempotent for the client).
 7. **Disconnect** → `leave_all` then remove session (defensive cleanup).
 8. **Send** to a room only if the session is a member of that room.
+
+### Delivery policy (1.3)
+
+Outbound path for both unicast (`reply` → `send_message`) and broadcast (`send_many`):
+
+1. Resolve `outbound_tx` under the clients lock, then **release** the lock before `try_send` (avoids deadlock with `remove_client`).
+2. One helper (`deliver`) owns `try_send` + error handling.
+3. `Full` or `Closed` → `remove_client` → `evict_tx` → unified `disconnect` (1.1). No silent drop of acks.
+4. Payload shared via `Arc<Vec<u8>>` (clone the `Arc`, not the bytes).
 
 ---
 
@@ -111,8 +120,8 @@ Do **not** prioritize yet:
 
 1. ~~Single `disconnect` path (1.1).~~
 2. ~~Membership rules + leave on the wire (1.2).~~
-3. Unit tests for room storage / auth (1.5) — lock in switch / leave / duplicates.
-4. Align delivery error handling (1.3: unicast = broadcast policy).
+3. ~~Align delivery error handling (1.3: unicast = broadcast policy).~~
+4. Unit tests for room storage / auth (1.5) — lock in switch / leave / duplicates.
 5. Finish README sync + legacy bins (1.4); then a small Phase 3 slice (presence or current-room UX).
 
 ---
@@ -123,4 +132,4 @@ Do **not** prioritize yet:
 - Prefer one vertical slice at a time (rule → code → test → README note).
 - When choosing between a flashy feature and an invariant fix, choose the invariant.
 
-Last updated: 2026-08-03 (1.2 membership documented + checked off)
+Last updated: 2026-08-03 (1.3 delivery policy aligned + checked off)

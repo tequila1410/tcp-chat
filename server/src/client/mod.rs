@@ -46,6 +46,13 @@ impl ClientRegistry {
         session_id
     }
 
+    pub async fn remove_client(&self, session_id: SessionId) {
+        let mut clients_lock = self.clients.lock().await;
+        if let Some(client) = clients_lock.remove(&session_id) {
+            let _ = client.evict_tx.send(());
+        };
+    }
+
     pub async fn send_many(&self, message_bytes: Vec<u8>, message_to: HashSet<SessionId>) {
         let outbound_txs = {
             let clients_lock = self.clients.lock().await;
@@ -62,34 +69,36 @@ impl ClientRegistry {
                 .collect::<Vec<(SessionId, mpsc::Sender<Arc<Vec<u8>>>)>>()
         };
         let message = Arc::new(message_bytes);
-        for (id, outbound_tx) in outbound_txs {
-            match outbound_tx.try_send(message.clone()) {
-                Ok(_) => println!("message sent"),
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    println!("Client {id} message full");
-                    self.remove_client(id).await;
-                }
-                Err(mpsc::error::TrySendError::Closed(_)) => {
-                    println!("Client {id} disconnected");
-                    self.remove_client(id).await;
-                }
-            };
+        for (session_id, outbound_tx) in outbound_txs {
+            
+            self.deliver(session_id, outbound_tx, message.clone()).await;
         };
     }
 
-    pub async fn remove_client(&self, session_id: SessionId) {
-        let mut clients_lock = self.clients.lock().await;
-        if let Some(client) = clients_lock.remove(&session_id) {
-            let _ = client.evict_tx.send(());
+    async fn send_message(&self, session_id: SessionId, message_bytes: Vec<u8>) {
+        let outbound_tx = {
+            let clients_lock = self.clients.lock().await;
+            clients_lock.get(&session_id).map(|client| client.outbound_tx.clone())
         };
-    }
-
-    pub async fn send_message(&self, session_id: SessionId, message_bytes: Vec<u8>) {
-        let mut clients_lock = self.clients.lock().await;
-        if let Some(client) = clients_lock.get_mut(&session_id) {
-            let _ = client.outbound_tx.try_send(Arc::new(message_bytes));
+        if let Some(outbound_tx) = outbound_tx {
+            let message = Arc::new(message_bytes);
+            self.deliver(session_id, outbound_tx, message).await;
         }
     }
+
+    async fn deliver(&self, session_id: SessionId, outbound_tx: mpsc::Sender<Arc<Vec<u8>>>, message_bytes: Arc<Vec<u8>>) {
+        match outbound_tx.try_send(message_bytes) {
+            Ok(_) => println!("message sent"),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                println!("Client {session_id} message full");
+                self.remove_client(session_id).await;
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                println!("Client {session_id} disconnected");
+                self.remove_client(session_id).await;
+            }
+        }
+    }    
 
     pub async fn reply(&self, session_id: SessionId, msg: ServerMessage) {
         let payload = msg.serialize();
