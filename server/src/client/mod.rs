@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use shared::{framing::encode_frame, protocol::ServerMessage};
@@ -46,7 +46,7 @@ impl ClientRegistry {
         session_id
     }
 
-    pub async fn send_many(&self, message_bytes: Vec<u8>, message_to: Vec<SessionId>) {
+    pub async fn send_many(&self, message_bytes: Vec<u8>, message_to: HashSet<SessionId>) {
         let outbound_txs = {
             let clients_lock = self.clients.lock().await;
 

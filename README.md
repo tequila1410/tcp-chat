@@ -12,7 +12,8 @@ Learning project focused on backend networking: framing, a custom binary protoco
 - Length-prefixed TCP framing with a max frame size
 - Custom binary protocol shared between server and client
 - Login / password authentication
-- Chat rooms: create, join, list, send messages to a room
+- Chat rooms: create, join, leave, list, send messages to a room
+- Membership: a session is in at most one room; join/create switches room
 - Slow-client protection (bounded write queue; full queue → disconnect)
 
 ---
@@ -71,16 +72,20 @@ Messages are sent as slash-commands:
 /rooms
 /create_room <name>
 /join <name>
+/leave
 /room <name> <text>
 ```
+
+You can be in **at most one room**. `/join` or `/create_room` switches you into that room (leaves the previous one). `/leave` exits the current room; repeating `/leave` is OK. `/create_room` also joins you as a member.
 
 Example session:
 
 ```text
 /login Oliver 123123
 /create_room rust
-/join rust
 /room rust hello from Oliver
+/leave
+/join general
 ```
 
 ---
@@ -110,10 +115,11 @@ Wire format is **binary**, not line-based text:
 1. **Frame:** `u32` big-endian length + payload (max payload ~8 KiB)
 2. **Payload:** message type byte + length-prefixed fields
 
-Client → server includes auth, room management, and `SendToRoom`.  
-Server → client includes auth results, room events, and room messages.
+Client → server includes auth, room management (`CreateRoom` / `JoinRoom` / `LeaveRoom` / `GetRooms`), and `SendToRoom`.  
+Server → client includes auth results, room acks (`RoomCreated` / `RoomJoined` / `RoomLeft` / `RoomErr`), and room messages.
 
-See `shared/src/protocol.rs` and `shared/src/framing.rs` for the exact layout.
+Full membership rules: `roadmap.md` § Membership rules (1.2).  
+Wire layout: `shared/src/protocol.rs` and `shared/src/framing.rs`.
 
 ---
 

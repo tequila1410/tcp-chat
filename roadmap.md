@@ -15,12 +15,14 @@ Already in place:
 - Tokio TCP server with per-connection tasks
 - Length-prefixed framing + binary protocol (`shared`)
 - Auth (in-memory credentials)
-- Rooms (create / join / list / send-to-room)
+- Rooms (create / join / list / leave / send-to-room)
+- Single-room membership policy (see § Membership rules)
+- Unified `disconnect` path (leave rooms + remove session)
 - `ClientRegistry` + per-client write channel + slow-client eviction
 - CLI client with slash commands
 - Workspace: `server` / `client` / `shared`
 
-Known gaps (see audit): session lifecycle holes, membership invariants, god-object registry, weak tests/docs.
+Known gaps (see audit): god-object registry, weak tests, README/protocol drift (1.3–1.5).
 
 ---
 
@@ -31,12 +33,25 @@ Stabilize correctness of connections, rooms, and delivery.
 | # | Item | Why | Done when |
 |---|------|-----|-----------|
 | 1.1 | ✅ Single disconnect path for all exit reasons (EOF, read error, frame too large, write failure, slow client) | Ghost sessions / room members | One function owns cleanup; write-task death triggers it |
-| 1.2 | Room membership invariants (no duplicate joins; explicit leave semantics; decide multi-room policy) | Broken fanout and leave | Documented rules + storage behavior matches them |
+| 1.2 | ✅ Room membership invariants (no duplicate joins; explicit leave; single-room + switch) | Broken fanout and leave | Documented rules + storage/protocol match them |
 | 1.3 | Align unicast and broadcast delivery (`reply` / `send_message` vs `send_many` on Full/Closed) | Auth/room acks can be silently dropped | Same eviction/error policy on both paths |
 | 1.4 | Sync project map: update README to real protocol/modules; archive or remove legacy `src/bin/*` | Mental model drift | README matches code; dead bins don't confuse |
-| 1.5 | Unit tests for `MemoryRoomStorage` + auth decisions (no TCP) | Regressions on every change | create/join/recipients/leave_all/duplicates covered |
+| 1.5 | Unit tests for `MemoryRoomStorage` + auth decisions (no TCP) | Regressions on every change | create/join/recipients/leave/leave_all/duplicates/switch covered |
 
 **Exit criteria:** no ghost members after disconnect; join rules are explicit; docs match reality; storage tests pass.
+
+### Membership rules (1.2)
+
+Contract for `MemoryRoomStorage` / room handlers. Storage keeps two indexes in sync: `room → members` and `session → current room`.
+
+1. A session is in **0 or 1** room (not many at once).
+2. **Join** another existing room → atomic **switch** (leave current, then join).
+3. **Join** the same room again → `AlreadyMember`; membership unchanged.
+4. **Create** → create room + **auto-join** (with switch if already elsewhere).
+5. **Create** when the name exists → `AlreadyExist`; membership unchanged.
+6. **Leave** (no room name) → not in any room. Domain outcome: `Left` | `WasNotMember` (not an error). Wire: both map to `RoomLeft` (idempotent for the client).
+7. **Disconnect** → `leave_all` then remove session (defensive cleanup).
+8. **Send** to a room only if the session is a member of that room.
 
 ---
 
@@ -64,7 +79,7 @@ Suggested order:
 
 | # | Feature | Learning focus | Complexity |
 |---|---------|----------------|------------|
-| 3.1 | Leave room + client “current room” UX | State transitions, protocol evolution | Low |
+| 3.1 | Client “current room” UX (leave already in 1.2) | State on client, less typing for `/room` | Low |
 | 3.2 | Presence (join/leave notifications) | Fanout, event design | Medium |
 | 3.3 | Idle timeout / max connections | Resource limits, `tokio::time`, DoS basics | Medium |
 | 3.4 | Private messages | Routing, authorization | Medium |
@@ -94,11 +109,11 @@ Do **not** prioritize yet:
 
 ## Near-term focus (next 5 steps)
 
-1. Draw session lifecycle (all enter/exit paths) → implement one `disconnect`.
-2. Fix room membership rules + tests.
-3. Align delivery error handling (unicast = broadcast policy).
-4. Update README; clean legacy bins from the active mental model.
-5. Ship one small feature on top (leave room or presence).
+1. ~~Single `disconnect` path (1.1).~~
+2. ~~Membership rules + leave on the wire (1.2).~~
+3. Unit tests for room storage / auth (1.5) — lock in switch / leave / duplicates.
+4. Align delivery error handling (1.3: unicast = broadcast policy).
+5. Finish README sync + legacy bins (1.4); then a small Phase 3 slice (presence or current-room UX).
 
 ---
 
@@ -108,4 +123,4 @@ Do **not** prioritize yet:
 - Prefer one vertical slice at a time (rule → code → test → README note).
 - When choosing between a flashy feature and an invariant fix, choose the invariant.
 
-Last updated: 2026-08-03
+Last updated: 2026-08-03 (1.2 membership documented + checked off)

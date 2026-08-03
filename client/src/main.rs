@@ -79,14 +79,17 @@ fn spawn_read_task(mut read_half: OwnedReadHalf, shutdown_sender: oneshot::Sende
                                 ServerMessage::Err(error) => {
                                     println!("{error}");
                                 }
-                                ServerMessage::RoomCreated(tip) => {
-                                    println!("{tip}");
+                                ServerMessage::RoomCreated(message) => {
+                                    println!("{message}");
                                 }
-                                ServerMessage::RoomJoined(tip) => {
-                                    println!("{tip}");
+                                ServerMessage::RoomJoined(message) => {
+                                    println!("{message}");
                                 }
                                 ServerMessage::RoomsGet(rooms) => {
                                     println!("Rooms list: {rooms:?}");
+                                }
+                                ServerMessage::RoomLeft(message) => {
+                                    println!("{message}");
                                 }
                                 ServerMessage::RoomErr(err) => {
                                     println!("{err}");
@@ -148,6 +151,11 @@ async fn handle_command(client: &mut OwnedWriteHalf, user_message: &str) {
         }
         "/join" => {
             let message = ClientMessage::JoinRoom(args.to_string()).serialize();
+            let message_bytes = encode_frame(&message);
+            send_message(client, &message_bytes).await;
+        }
+        "/leave" => {
+            let message = ClientMessage::LeaveRoom.serialize();
             let message_bytes = encode_frame(&message);
             send_message(client, &message_bytes).await;
         }

@@ -7,6 +7,7 @@ pub enum ClientMessage {
 
     CreateRoom(String),
     JoinRoom(String),
+    LeaveRoom,
     GetRooms,
     SendToRoom {
         room: String,
@@ -28,6 +29,9 @@ impl ClientMessage {
                 let pass_length = password.len() as u32;
                 bytes.extend_from_slice(&pass_length.to_be_bytes());
                 bytes.extend_from_slice(password.as_bytes());
+            }
+            ClientMessage::LeaveRoom => {
+                bytes.push(2);
             }
             ClientMessage::CreateRoom(room_name) => {
                 bytes.push(3);
@@ -81,6 +85,9 @@ impl ClientMessage {
                 ).ok()?;
                 Some(Self::Auth{ login, password })
             },
+            2 => {
+                Some(Self::LeaveRoom)
+            }
             3 => {
                 let (message_bytes, _) = read_bytes(&bytes, 1)?;
                 let message = String::from_utf8(
@@ -137,7 +144,7 @@ pub enum ServerMessage {
         text: String,
     },
     Err(String),
-
+    RoomLeft(String),
     RoomCreated(String),
     RoomJoined(String),
     RoomErr(String),
@@ -206,6 +213,13 @@ impl ServerMessage {
 
                 let rooms = Self::serialize_strings(&rooms);
                 bytes.extend_from_slice(&rooms);
+            }
+            Self::RoomLeft(message) => {
+                bytes.push(9);
+
+                let message_length = message.len() as u32;
+                bytes.extend_from_slice(&message_length.to_be_bytes());
+                bytes.extend_from_slice(message.as_bytes());
             }
         }
         bytes
@@ -278,6 +292,13 @@ impl ServerMessage {
             8 => {
                 let rooms = Self::deserialize_strings(&bytes[1..])?;
                 Some(Self::RoomsGet(rooms))
+            }
+            9 => {
+                let (message_bytes, _) = read_bytes(&bytes, 1)?;
+                let message = String::from_utf8(
+                    message_bytes.to_vec()
+                ).ok()?;
+                Some(Self::RoomLeft(message))
             }
             _ => None
         }

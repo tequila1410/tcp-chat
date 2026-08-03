@@ -9,7 +9,7 @@ use tokio::net::tcp::OwnedWriteHalf;
 
 use crate::auth::authenticate;
 use crate::chat::send_to_room;
-use crate::rooms::{create_room, get_rooms, join_room};
+use crate::rooms::{create_room, get_rooms, join_room, leave_room};
 use crate::{auth::Credentials, client::{ClientRegistry, SessionId}, room::{RoomManager, RoomStorage}};
 
 
@@ -68,6 +68,9 @@ pub async fn handle_connection<S: RoomStorage + 'static>(
                                     }
                                     ClientMessage::GetRooms => {
                                         get_rooms(&client_registry, &room_manager, session_id).await;
+                                    }
+                                    ClientMessage::LeaveRoom => {
+                                        leave_room(&client_registry, &room_manager, session_id).await;
                                     }
                                 }
                             } else {
