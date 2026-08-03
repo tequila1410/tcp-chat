@@ -11,8 +11,8 @@ static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug)]
 struct Client {
     login: Option<String>,
-    sender: mpsc::Sender<Arc<Vec<u8>>>,
-    shutdown: oneshot::Sender<()>,
+    outbound_tx: mpsc::Sender<Arc<Vec<u8>>>,
+    evict_tx: oneshot::Sender<()>,
 }
 type Clients = Arc<Mutex<HashMap<SessionId, Client>>>;
 
@@ -33,36 +33,37 @@ impl ClientRegistry {
         clients_lock.get(&session_id).and_then(|client| client.login.clone())
     }
 
-    pub async fn insert_client(&self, sender: mpsc::Sender<Arc<Vec<u8>>>, shutdown: oneshot::Sender<()>) -> SessionId {
+    pub async fn insert_client(
+        &self,
+        outbound_tx: mpsc::Sender<Arc<Vec<u8>>>,
+        evict_tx: oneshot::Sender<()>,
+    ) -> SessionId {
         let session_id: SessionId = NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         {
             let mut clients_lock = self.clients.lock().await;
-            clients_lock.insert(session_id, Client { login: None, sender, shutdown });
+            clients_lock.insert(session_id, Client { login: None, outbound_tx, evict_tx });
         }
         session_id
     }
 
     pub async fn send_many(&self, message_bytes: Vec<u8>, message_to: Vec<SessionId>) {
-        let senders = {
+        let outbound_txs = {
             let clients_lock = self.clients.lock().await;
-    
+
             clients_lock
                 .iter()
-                .filter_map(|(id, client_handle)| {
+                .filter_map(|(id, client)| {
                     if message_to.contains(id) {
-                        Some((
-                            *id,
-                            client_handle.sender.clone()
-                        ))
+                        Some((*id, client.outbound_tx.clone()))
                     } else {
                         None
                     }
                 })
                 .collect::<Vec<(SessionId, mpsc::Sender<Arc<Vec<u8>>>)>>()
         };
-        let message_arc = Arc::new(message_bytes);
-        for (id, sender) in senders {
-            match sender.try_send(message_arc.clone()) {
+        let message = Arc::new(message_bytes);
+        for (id, outbound_tx) in outbound_txs {
+            match outbound_tx.try_send(message.clone()) {
                 Ok(_) => println!("message sent"),
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     println!("Client {id} message full");
@@ -79,14 +80,14 @@ impl ClientRegistry {
     pub async fn remove_client(&self, session_id: SessionId) {
         let mut clients_lock = self.clients.lock().await;
         if let Some(client) = clients_lock.remove(&session_id) {
-            let _ = client.shutdown.send(());
+            let _ = client.evict_tx.send(());
         };
     }
 
     pub async fn send_message(&self, session_id: SessionId, message_bytes: Vec<u8>) {
         let mut clients_lock = self.clients.lock().await;
         if let Some(client) = clients_lock.get_mut(&session_id) {
-            let _ = client.sender.try_send(Arc::new(message_bytes));
+            let _ = client.outbound_tx.try_send(Arc::new(message_bytes));
         }
     }
 

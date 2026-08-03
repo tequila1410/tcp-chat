@@ -30,7 +30,7 @@ Stabilize correctness of connections, rooms, and delivery.
 
 | # | Item | Why | Done when |
 |---|------|-----|-----------|
-| 1.1 | Single disconnect path for all exit reasons (EOF, read error, frame too large, write failure, slow client) | Ghost sessions / room members | One function owns cleanup; write-task death triggers it |
+| 1.1 | ✅ Single disconnect path for all exit reasons (EOF, read error, frame too large, write failure, slow client) | Ghost sessions / room members | One function owns cleanup; write-task death triggers it |
 | 1.2 | Room membership invariants (no duplicate joins; explicit leave semantics; decide multi-room policy) | Broken fanout and leave | Documented rules + storage behavior matches them |
 | 1.3 | Align unicast and broadcast delivery (`reply` / `send_message` vs `send_many` on Full/Closed) | Auth/room acks can be silently dropped | Same eviction/error policy on both paths |
 | 1.4 | Sync project map: update README to real protocol/modules; archive or remove legacy `src/bin/*` | Mental model drift | README matches code; dead bins don't confuse |
@@ -108,4 +108,4 @@ Do **not** prioritize yet:
 - Prefer one vertical slice at a time (rule → code → test → README note).
 - When choosing between a flashy feature and an invariant fix, choose the invariant.
 
-Last updated: 2026-07-31
+Last updated: 2026-08-03

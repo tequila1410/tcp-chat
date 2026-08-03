@@ -20,14 +20,15 @@ pub async fn handle_connection<S: RoomStorage + 'static>(
     room_manager: RoomManager<S>,
     credentials: Credentials,
 ) -> io::Result<()> {
-    let (sender, receiver) = mpsc::channel::<Arc<Vec<u8>>>(32);
-    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+    let (outbound_tx, outbound_rx) = mpsc::channel::<Arc<Vec<u8>>>(32);
+    let (evict_tx, mut evict_rx) = oneshot::channel::<()>();
+    let (writer_done_tx, mut writer_done_rx) = oneshot::channel::<()>();
 
-    let session_id = client_registry.insert_client(sender, shutdown_tx).await;
+    let session_id = client_registry.insert_client(outbound_tx, evict_tx).await;
 
     let (mut read_half, write_half) = stream.into_split();
 
-    spawn_write_task(receiver, write_half, session_id);
+    spawn_write_task(outbound_rx, write_half, session_id, writer_done_tx);
 
     let mut buffer = [0u8; 1024];
     let mut pending = Vec::new();
@@ -83,23 +84,34 @@ pub async fn handle_connection<S: RoomStorage + 'static>(
                     }
                 }
             },
-            _ = &mut shutdown_rx => {
-                println!("Shutdown signal for {session_id}");
-                room_manager.leave_all(session_id).await;
+            _ = &mut evict_rx => {
+                println!("Evict signal for {session_id}");
+                disconnect(&client_registry, &room_manager, session_id).await;
+                return Ok(());
+            },
+            _ = &mut writer_done_rx => {
+                println!("Writer done for {session_id}");
+                disconnect(&client_registry, &room_manager, session_id).await;
                 return Ok(());
             }
         }
     }
 }
 
-fn spawn_write_task(mut receiver: mpsc::Receiver<Arc<Vec<u8>>>, mut write_half: OwnedWriteHalf, session_id: SessionId) {
+fn spawn_write_task(
+    mut outbound_rx: mpsc::Receiver<Arc<Vec<u8>>>,
+    mut write_half: OwnedWriteHalf,
+    session_id: SessionId,
+    writer_done_tx: oneshot::Sender<()>,
+) {
     tokio::spawn(async move {
-        while let Some(message) = receiver.recv().await {
+        while let Some(message) = outbound_rx.recv().await {
             if let Err(error) = write_half.write_all(&message).await {
                 eprintln!("Failed to write to client {session_id}: {error}");
                 break;
             }
         }
+        let _ = writer_done_tx.send(());
     });
 }
 
