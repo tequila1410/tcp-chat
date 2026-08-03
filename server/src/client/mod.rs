@@ -70,7 +70,6 @@ impl ClientRegistry {
         };
         let message = Arc::new(message_bytes);
         for (session_id, outbound_tx) in outbound_txs {
-            
             self.deliver(session_id, outbound_tx, message.clone()).await;
         };
     }

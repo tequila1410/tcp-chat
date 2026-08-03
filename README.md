@@ -92,11 +92,13 @@ Example session:
 
 ## Project layout
 
+Cargo **workspace** (root `Cargo.toml` has members only — no root package):
+
 ```text
 tcp-chat/
-├── server/     # TCP chat server
-├── client/     # CLI client
-├── shared/     # Framing + protocol types
+├── server/     # TCP chat server (`cargo run -p server`)
+├── client/     # CLI client (`cargo run -p client`)
+├── shared/     # Framing + protocol types (library)
 └── roadmap.md  # Development plan (learning path)
 ```
 
@@ -115,10 +117,11 @@ Wire format is **binary**, not line-based text:
 1. **Frame:** `u32` big-endian length + payload (max payload ~8 KiB)
 2. **Payload:** message type byte + length-prefixed fields
 
-Client → server includes auth, room management (`CreateRoom` / `JoinRoom` / `LeaveRoom` / `GetRooms`), and `SendToRoom`.  
-Server → client includes auth results, room acks (`RoomCreated` / `RoomJoined` / `RoomLeft` / `RoomErr`), and room messages.
+Client → server: `Auth`, `CreateRoom`, `JoinRoom`, `LeaveRoom`, `GetRooms`, `SendToRoom`.  
+Server → client: `AuthOk` / `AuthErr`, room acks (`RoomCreated` / `RoomJoined` / `RoomLeft` / `RoomErr` / `RoomsGet`), `Message`, `Err`.
 
-Full membership rules: `roadmap.md` § Membership rules (1.2).  
+Membership rules: `roadmap.md` § Membership rules (1.2).  
+Delivery (full/closed write queue → disconnect): `roadmap.md` § Delivery policy (1.3).  
 Wire layout: `shared/src/protocol.rs` and `shared/src/framing.rs`.
 
 ---
