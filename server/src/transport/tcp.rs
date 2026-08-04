@@ -1,16 +1,12 @@
 use std::io;
 use tokio::net::TcpListener;
 
-use crate::auth::Credentials;
-use crate::client::ClientRegistry;
-use crate::room::{RoomManager, RoomStorage};
-use crate::transport::connection::handle_connection;
+use crate::room::{RoomStorage};
+use crate::transport::connection::{ConnectionDeps, handle_connection};
 
 pub async fn run<S: RoomStorage + 'static>(
     addr: &str,
-    client_registry: &ClientRegistry,
-    room_manager: &RoomManager<S>,
-    credentials: &Credentials,
+    deps: ConnectionDeps<S>,
 ) -> io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     loop {
@@ -22,11 +18,9 @@ pub async fn run<S: RoomStorage + 'static>(
             }
         };
 
-        let client_registry= client_registry.clone();
-        let room_manager = room_manager.clone();
-        let credentials = credentials.clone();
+        let deps = deps.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_connection(stream, client_registry, room_manager, credentials).await {
+            if let Err(error) = handle_connection(stream, deps).await {
                 eprintln!("Client error: {error}");
             }
         });

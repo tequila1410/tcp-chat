@@ -3,16 +3,16 @@ use std::collections::HashMap;
 
 use shared::protocol::ServerMessage;
 
-use crate::client::{ClientRegistry, SessionId};
+use crate::client::{Identity, Outbound, SessionId};
 
 pub type Credentials = Arc<HashMap<String, String>>;
 
-pub async fn authenticate(client_registry: &ClientRegistry, session_id: SessionId, credentials: &Credentials, login: String, password: String) {
+pub async fn authenticate(identity: &Identity, outbound: &Outbound, session_id: SessionId, credentials: &Credentials, login: String, password: String) {
     if is_valid_credentials(credentials, &login, &password) {
-        client_registry.authorize_client(session_id, login).await;
-        client_registry.reply(session_id, ServerMessage::AuthOk).await;
+        identity.authorize_client(session_id, login).await;
+        outbound.reply(session_id, ServerMessage::AuthOk).await;
     } else {
-        client_registry.reply(session_id,  ServerMessage::AuthErr("Invalid credentials".to_string())).await;
+        outbound.reply(session_id,  ServerMessage::AuthErr("Invalid credentials".to_string())).await;
     }
 }
 

@@ -18,11 +18,12 @@ Already in place:
 - Rooms (create / join / list / leave / send-to-room)
 - Single-room membership policy (see § Membership rules)
 - Unified `disconnect` path (leave rooms + remove session)
-- `ClientRegistry` + per-client write channel + slow-client eviction
+- Client runtime split: `Sessions` / `Identity` / `Outbound` (shared store) + `ConnectionDeps`
+- Per-client write channel + slow-client eviction (outbound delivery policy)
 - CLI client with slash commands
 - Workspace: `server` / `client` / `shared`
 
-Known gaps (see audit): god-object registry; Phase 2 architecture.
+Known gaps: Phase 2 remainder (2.2–2.5).
 
 ---
 
@@ -70,13 +71,22 @@ Make the system easier to extend and reason about.
 
 | # | Item | Why | Done when |
 |---|------|-----|-----------|
-| 2.1 | Split `ClientRegistry` responsibilities (session / identity / outbound) | God object blocks safe changes | Clear module boundaries; handlers don't need the whole world |
+| 2.1 | ✅ Split `ClientRegistry` responsibilities (session / identity / outbound) | God object blocks safe changes | Clear module boundaries; handlers don't need the whole world |
 | 2.2 | Testable application layer (handlers return outcomes; transport maps to `ServerMessage`) | Business logic testable without sockets | Use-case unit tests exist |
 | 2.3 | Harden protocol (type constants, decode errors instead of bare `Option`, optional version byte) | Fragile wire format | Decode failures are typed and visible |
 | 2.4 | Structured logging with `tracing` + `session_id` | Concurrent debugging | Can follow one connection through lifecycle |
 | 2.5 | Clarify `RoomManager` (real policies vs thin passthrough) | Fake layer worse than none | Manager owns policy **or** is removed/simplified honestly |
 
 **Exit criteria:** adding a command doesn't require touching five unrelated concerns; core logic has tests; logs are useful under load.
+
+### Client runtime split (2.1)
+
+Replaced god-object `ClientRegistry` with one shared in-memory store and three narrow APIs:
+
+1. **`Sessions`** — insert/remove connection; owns eviction signal.
+2. **`Identity`** — login / auth checks for a `SessionId`.
+3. **`Outbound`** — `reply` / `send_many` + delivery policy (Full/Closed → private remove helper).
+4. **`ConnectionDeps`** — composition root for a TCP connection (`sessions` + `identity` + `outbound` + rooms + credentials); handlers receive only the slices they need.
 
 ---
 
@@ -123,9 +133,10 @@ Do **not** prioritize yet:
 3. ~~Align delivery error handling (1.3: unicast = broadcast policy).~~
 4. ~~README sync + remove legacy root `src/` (1.4).~~
 5. ~~Unit tests for room storage / auth (1.5).~~
-6. Phase 2.1 — split `ClientRegistry` responsibilities (session / identity / outbound).
+6. ~~Phase 2.1 — split `ClientRegistry` (Sessions / Identity / Outbound + ConnectionDeps).~~
+7. Phase 2.2 — testable application layer (handlers return outcomes; transport maps wire).
 
-Phase 1 complete. Prefer 2.1–2.3 before Phase 3 features; a small Phase 3 slice is ok only if it doesn't fight the god-object.
+Phase 1 complete; 2.1 complete. Prefer 2.2–2.3 before Phase 3 features.
 
 ---
 
@@ -135,4 +146,4 @@ Phase 1 complete. Prefer 2.1–2.3 before Phase 3 features; a small Phase 3 slic
 - Prefer one vertical slice at a time (rule → code → test → README note).
 - When choosing between a flashy feature and an invariant fix, choose the invariant.
 
-Last updated: 2026-08-04 (1.5: RoomState + auth decision unit tests; Phase 1 done)
+Last updated: 2026-08-04 (2.1: Sessions / Identity / Outbound + ConnectionDeps; ClientRegistry removed)
