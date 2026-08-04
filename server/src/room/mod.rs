@@ -18,8 +18,8 @@ pub trait RoomStorage: Send + Sync {
     async fn get_rooms(&self) -> Result<Vec<String>, RoomError>;
     async fn join_room(
         &self,
-        name: String,
         session_id: SessionId,
+        name: String,
     ) -> Result<(), RoomError>;
     async fn get_room_members(
         &self,
@@ -51,8 +51,8 @@ impl<S: RoomStorage> RoomManager<S> {
         self.storage.create_room(session_id, name).await
     }
 
-    pub async fn join_room(&self, name: String, session_id: SessionId) -> Result<(), RoomError> {
-        self.storage.join_room(name, session_id).await
+    pub async fn join_room(&self, session_id: SessionId, name: String) -> Result<(), RoomError> {
+        self.storage.join_room(session_id, name).await
     }
 
     pub async fn get_rooms(&self) -> Result<Vec<String>, RoomError> {

@@ -24,11 +24,11 @@ impl RoomState {
         }
 
         self.rooms.insert(room_name.clone(), Room { clients: HashSet::new() });
-        self.join_room(room_name, session_id)?;
+        self.join_room(session_id, room_name)?;
         Ok(())
     }
 
-    fn join_room(&mut self, room_name: String, session_id: SessionId) -> Result<(), RoomError> {
+    fn join_room(&mut self, session_id: SessionId, room_name: String) -> Result<(), RoomError> {
         {
             let room = self
                 .rooms
@@ -67,6 +67,28 @@ impl RoomState {
     fn leave_all(&mut self, session_id: SessionId) {
         let _ = self.leave(session_id);
     }
+
+    fn recipients_for(
+        &self,
+        room_name: &str,
+        session_id: SessionId,
+    ) -> Result<HashSet<SessionId>, RoomError> {
+        let room = self
+            .rooms
+            .get(room_name)
+            .ok_or_else(|| RoomError::NotFound(room_name.to_string()))?;
+
+        if !room.clients.contains(&session_id) {
+            return Err(RoomError::NotMember(session_id.to_string()));
+        }
+
+        Ok(room
+            .clients
+            .iter()
+            .copied()
+            .filter(|client| *client != session_id)
+            .collect())
+    }
 }
 
 pub struct MemoryRoomStorage {
@@ -88,9 +110,9 @@ impl RoomStorage for MemoryRoomStorage {
         state.create_room(session_id, room_name)
     }
 
-    async fn join_room(&self, room_name: String, session_id: SessionId) -> Result<(), RoomError> {
+    async fn join_room(&self, session_id: SessionId, room_name: String) -> Result<(), RoomError> {
         let mut state = self.state.write().await;
-        state.join_room(room_name, session_id)
+        state.join_room(session_id, room_name)
     }
 
     async fn get_room_members(&self, room_name: String) -> Result<HashSet<SessionId>, RoomError> {
@@ -110,16 +132,7 @@ impl RoomStorage for MemoryRoomStorage {
 
     async fn recipients_for(&self, room_name: &str, session_id: SessionId) -> Result<HashSet<SessionId>, RoomError> {
         let state = self.state.read().await;
-        if let Some(room) = state.rooms.get(room_name) {
-            if room.clients.contains(&session_id) {
-                let clients = room.clients.clone().into_iter().filter(|client| *client != session_id).collect::<HashSet<SessionId>>();
-                return Ok(clients);
-            } else {
-                return Err(RoomError::NotMember(session_id.to_string()));
-            }
-        } else {
-            return Err(RoomError::NotFound(room_name.to_string()));
-        }
+        state.recipients_for(room_name, session_id)
     }
 
     async fn delete_room(&self, room_name: String) -> Result<(), RoomError> {
@@ -149,3 +162,7 @@ impl RoomStorage for MemoryRoomStorage {
         state.leave_all(session_id);
     }
 }
+
+#[cfg(test)]
+#[path = "memory_tests.rs"]
+mod tests;

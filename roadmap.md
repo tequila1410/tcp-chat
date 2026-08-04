@@ -22,7 +22,7 @@ Already in place:
 - CLI client with slash commands
 - Workspace: `server` / `client` / `shared`
 
-Known gaps (see audit): god-object registry, weak tests (1.5); Phase 2 architecture.
+Known gaps (see audit): god-object registry; Phase 2 architecture.
 
 ---
 
@@ -36,7 +36,7 @@ Stabilize correctness of connections, rooms, and delivery.
 | 1.2 | ✅ Room membership invariants (no duplicate joins; explicit leave; single-room + switch) | Broken fanout and leave | Documented rules + storage/protocol match them |
 | 1.3 | ✅ Align unicast and broadcast delivery (`reply` / `send_message` vs `send_many` on Full/Closed) | Auth/room acks can be silently dropped | Same eviction/error policy on both paths |
 | 1.4 | ✅ Sync project map: update README to real protocol/modules; remove legacy root `src/` (`src/bin/*`) | Mental model drift | README matches code; dead bins don't confuse |
-| 1.5 | Unit tests for `MemoryRoomStorage` + auth decisions (no TCP) | Regressions on every change | create/join/recipients/leave/leave_all/duplicates/switch covered |
+| 1.5 | ✅ Unit tests for `RoomState` / auth decisions (no TCP) | Regressions on every change | create/join/recipients/leave/leave_all/duplicates/switch covered |
 
 **Exit criteria:** no ghost members after disconnect; join rules are explicit; docs match reality; storage tests pass.
 
@@ -122,8 +122,10 @@ Do **not** prioritize yet:
 2. ~~Membership rules + leave on the wire (1.2).~~
 3. ~~Align delivery error handling (1.3: unicast = broadcast policy).~~
 4. ~~README sync + remove legacy root `src/` (1.4).~~
-5. Unit tests for room storage / auth (1.5) — lock in switch / leave / duplicates.
-6. Then a small Phase 3 slice (presence or current-room UX) after 1.5.
+5. ~~Unit tests for room storage / auth (1.5).~~
+6. Phase 2.1 — split `ClientRegistry` responsibilities (session / identity / outbound).
+
+Phase 1 complete. Prefer 2.1–2.3 before Phase 3 features; a small Phase 3 slice is ok only if it doesn't fight the god-object.
 
 ---
 
@@ -133,4 +135,4 @@ Do **not** prioritize yet:
 - Prefer one vertical slice at a time (rule → code → test → README note).
 - When choosing between a flashy feature and an invariant fix, choose the invariant.
 
-Last updated: 2026-08-03 (1.4: removed orphan root `src/`, README synced)
+Last updated: 2026-08-04 (1.5: RoomState + auth decision unit tests; Phase 1 done)

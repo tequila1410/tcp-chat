@@ -20,7 +20,7 @@ pub async fn create_room<S: RoomStorage>(client_registry: &ClientRegistry, room_
 
 pub async fn join_room<S: RoomStorage>(client_registry: &ClientRegistry, room_manager: &RoomManager<S>, session_id: SessionId, room_name: String) {
     if client_registry.is_client_authorized(session_id).await {
-        match room_manager.join_room(room_name, session_id).await {
+        match room_manager.join_room(session_id, room_name).await {
             Ok(_) => {
                 client_registry.reply(session_id, ServerMessage::RoomJoined("Room successfuly joined".to_string())).await;
             }
