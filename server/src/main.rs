@@ -3,15 +3,13 @@ use std::env;
 
 mod client;
 mod room;
-mod chat;
-mod auth;
-mod rooms;
 mod transport;
+mod app;
 
 use crate::client::new_state;
 use crate::room::memory::MemoryRoomStorage;
 use crate::room::RoomManager;
-use crate::auth::init_credentials;
+use crate::app::auth::init_credentials;
 use crate::transport::connection::ConnectionDeps;
 use crate::transport::tcp::run;
 

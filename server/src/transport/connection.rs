@@ -7,11 +7,14 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::net::TcpStream;
 use tokio::net::tcp::OwnedWriteHalf;
 
-use crate::auth::authenticate;
-use crate::chat::send_to_room;
+use crate::app::auth::authenticate;
+use crate::app::chat::{send_to_room};
 use crate::client::{Identity, Outbound, Sessions};
-use crate::rooms::{create_room, get_rooms, join_room, leave_room};
-use crate::{auth::Credentials, client::SessionId, room::{RoomManager, RoomStorage}};
+use crate::app::rooms::{create_room, get_rooms, join_room, leave_room};
+use crate::transport::respond::{apply_auth_outcome, apply_chat_outcome, apply_room_outcome};
+use crate::app::auth::Credentials;
+use crate::room::{RoomManager, RoomStorage};
+use crate::client::SessionId;
 
 pub struct ConnectionDeps<S: RoomStorage> {
     sessions: Sessions,
@@ -72,22 +75,28 @@ pub async fn handle_connection<S: RoomStorage + 'static>(
                             if let Some(client_message) = ClientMessage::deserialize(&frame) {
                                 match client_message {
                                     ClientMessage::SendToRoom { room, text } => {
-                                        send_to_room(&deps.identity, &deps.outbound, &deps.rooms, room, text, session_id).await;
+                                        let outcome = send_to_room(&deps.identity, &deps.rooms, session_id, room, text).await;
+                                        apply_chat_outcome(&deps.outbound, session_id, outcome).await;
                                     }
                                     ClientMessage::Auth{login, password} => {
-                                        authenticate(&deps.identity, &deps.outbound, session_id, &deps.credentials, login, password).await;
+                                        let outcome = authenticate(&deps.identity, session_id, &deps.credentials, login, password).await;
+                                        apply_auth_outcome(&deps.outbound, session_id, outcome).await;
                                     }
                                     ClientMessage::CreateRoom(room_name) => {
-                                        create_room(&deps.identity, &deps.outbound, &deps.rooms, session_id, room_name).await;
+                                        let outcome = create_room(&deps.identity, &deps.rooms, session_id, room_name).await;
+                                        apply_room_outcome(&deps.outbound, session_id, outcome).await;
                                     }
                                     ClientMessage::JoinRoom(room_name) => {
-                                        join_room(&deps.identity, &deps.outbound, &deps.rooms, session_id, room_name).await;
+                                        let outcome = join_room(&deps.identity, &deps.rooms, session_id, room_name).await;
+                                        apply_room_outcome(&deps.outbound, session_id, outcome).await;
                                     }
                                     ClientMessage::GetRooms => {
-                                        get_rooms(&deps.identity, &deps.outbound, &deps.rooms, session_id).await;
+                                        let outcome = get_rooms(&deps.identity, &deps.rooms, session_id).await;
+                                        apply_room_outcome(&deps.outbound, session_id, outcome).await;
                                     }
                                     ClientMessage::LeaveRoom => {
-                                        leave_room(&deps.identity, &deps.outbound, &deps.rooms, session_id).await;
+                                        let outcome = leave_room(&deps.identity, &deps.rooms, session_id).await;
+                                        apply_room_outcome(&deps.outbound, session_id, outcome).await;
                                     }
                                 }
                             } else {
