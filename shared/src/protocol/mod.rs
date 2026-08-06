@@ -7,7 +7,6 @@ pub use server_message::ServerMessage;
 #[derive(Debug, PartialEq)]
 pub enum DecodeError {
     InvalidMessageType(u8),
-    InvalidMessageLength(usize),
     Truncated,
     InvalidUTF8,
 }

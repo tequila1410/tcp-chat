@@ -124,7 +124,7 @@ impl ServerMessage {
 
     pub fn deserialize(bytes: &[u8]) -> Result<Self, DecodeError> {
         if bytes.len() < 1 {
-            return Err(DecodeError::InvalidMessageLength(bytes.len()));
+            return Err(DecodeError::Truncated);
         }
 
         let message_type = ServerMessageType::try_from(bytes[0])?;
@@ -240,10 +240,10 @@ mod tests {
     }
 
     #[test]
-    fn empty_payload_is_invalid_length() {
+    fn empty_payload_is_truncated() {
         assert_eq!(
             ServerMessage::deserialize(&[]).unwrap_err(),
-            DecodeError::InvalidMessageLength(0)
+            DecodeError::Truncated
         );
     }
 

@@ -107,7 +107,7 @@ Wire decode is typed and testable; version byte intentionally deferred (single w
 
 1. **`shared/protocol/`** — split into `client_message` / `server_message` + shared helpers (`read_u32` / `read_bytes` / `read_string`).
 2. **Opcodes** — `ClientMessageType` / `ServerMessageType` (`#[repr(u8)]` + `TryFrom<u8>`).
-3. **`DecodeError`** — `InvalidMessageType(u8)`, `Truncated`, `InvalidUTF8`, …; `deserialize` → `Result<_, DecodeError>`.
+3. **`DecodeError`** — `InvalidMessageType(u8)`, `Truncated`, `InvalidUTF8`; `deserialize` → `Result<_, DecodeError>`.
 4. **Transport** — connection/client log typed decode failures (policy can harden later).
 5. **Tests** — round-trips + unknown type / truncated / bad UTF-8 (and `RoomsGet` list edge cases).
 6. **Deferred** — protocol version byte (see Explicitly deferred).
