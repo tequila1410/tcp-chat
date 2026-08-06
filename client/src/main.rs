@@ -65,38 +65,41 @@ fn spawn_read_task(mut read_half: OwnedReadHalf, shutdown_sender: oneshot::Sende
             loop {
                 match decode_frame(&mut pending) {
                     FrameResult::Complete(frame) => {
-                        if let Some(message) = ServerMessage::deserialize(&frame) {
-                            match message {
-                                ServerMessage::Message { room, from, text } => {
-                                    println!("[{room}] [{from}]: {text}");
-                                }
-                                ServerMessage::AuthErr(error) => {
-                                    println!("Auth error: {error}");
-                                }
-                                ServerMessage::AuthOk => {
-                                    println!("Authenticated success!");
-                                }
-                                ServerMessage::Err(error) => {
-                                    println!("{error}");
-                                }
-                                ServerMessage::RoomCreated(message) => {
-                                    println!("{message}");
-                                }
-                                ServerMessage::RoomJoined(message) => {
-                                    println!("{message}");
-                                }
-                                ServerMessage::RoomsGet(rooms) => {
-                                    println!("Rooms list: {rooms:?}");
-                                }
-                                ServerMessage::RoomLeft(message) => {
-                                    println!("{message}");
-                                }
-                                ServerMessage::RoomErr(err) => {
-                                    println!("{err}");
+                        match ServerMessage::deserialize(&frame) {
+                            Ok(message) => {
+                                match message {
+                                    ServerMessage::Message { room, from, text } => {
+                                        println!("[{room}] [{from}]: {text}");
+                                    }
+                                    ServerMessage::AuthErr(error) => {
+                                        println!("Auth error: {error}");
+                                    }
+                                    ServerMessage::AuthOk => {
+                                        println!("Authenticated success!");
+                                    }
+                                    ServerMessage::Err(error) => {
+                                        println!("{error}");
+                                    }
+                                    ServerMessage::RoomCreated(message) => {
+                                        println!("{message}");
+                                    }
+                                    ServerMessage::RoomJoined(message) => {
+                                        println!("{message}");
+                                    }
+                                    ServerMessage::RoomsGet(rooms) => {
+                                        println!("Rooms list: {rooms:?}");
+                                    }
+                                    ServerMessage::RoomLeft(message) => {
+                                        println!("{message}");
+                                    }
+                                    ServerMessage::RoomErr(err) => {
+                                        println!("{err}");
+                                    }
                                 }
                             }
-                        } else {
-                            println!("Can't deserialize frame");
+                            Err(error) => {
+                                println!("Can't deserialize frame: {error:?}");
+                            }
                         }
                     }
                     FrameResult::TooLarge => {

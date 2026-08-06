@@ -72,35 +72,38 @@ pub async fn handle_connection<S: RoomStorage + 'static>(
                 loop {
                     match decode_frame(&mut pending) {
                         FrameResult::Complete(frame) => {
-                            if let Some(client_message) = ClientMessage::deserialize(&frame) {
-                                match client_message {
-                                    ClientMessage::SendToRoom { room, text } => {
-                                        let outcome = send_to_room(&deps.identity, &deps.rooms, session_id, room, text).await;
-                                        apply_chat_outcome(&deps.outbound, session_id, outcome).await;
-                                    }
-                                    ClientMessage::Auth{login, password} => {
-                                        let outcome = authenticate(&deps.identity, session_id, &deps.credentials, login, password).await;
-                                        apply_auth_outcome(&deps.outbound, session_id, outcome).await;
-                                    }
-                                    ClientMessage::CreateRoom(room_name) => {
-                                        let outcome = create_room(&deps.identity, &deps.rooms, session_id, room_name).await;
-                                        apply_room_outcome(&deps.outbound, session_id, outcome).await;
-                                    }
-                                    ClientMessage::JoinRoom(room_name) => {
-                                        let outcome = join_room(&deps.identity, &deps.rooms, session_id, room_name).await;
-                                        apply_room_outcome(&deps.outbound, session_id, outcome).await;
-                                    }
-                                    ClientMessage::GetRooms => {
-                                        let outcome = get_rooms(&deps.identity, &deps.rooms, session_id).await;
-                                        apply_room_outcome(&deps.outbound, session_id, outcome).await;
-                                    }
-                                    ClientMessage::LeaveRoom => {
-                                        let outcome = leave_room(&deps.identity, &deps.rooms, session_id).await;
-                                        apply_room_outcome(&deps.outbound, session_id, outcome).await;
+                            match ClientMessage::deserialize(&frame) {
+                                Ok(client_message) => {
+                                    match client_message {
+                                        ClientMessage::SendToRoom { room, text } => {
+                                            let outcome = send_to_room(&deps.identity, &deps.rooms, session_id, room, text).await;
+                                            apply_chat_outcome(&deps.outbound, session_id, outcome).await;
+                                        }
+                                        ClientMessage::Auth{login, password} => {
+                                            let outcome = authenticate(&deps.identity, session_id, &deps.credentials, login, password).await;
+                                            apply_auth_outcome(&deps.outbound, session_id, outcome).await;
+                                        }
+                                        ClientMessage::CreateRoom(room_name) => {
+                                            let outcome = create_room(&deps.identity, &deps.rooms, session_id, room_name).await;
+                                            apply_room_outcome(&deps.outbound, session_id, outcome).await;
+                                        }
+                                        ClientMessage::JoinRoom(room_name) => {
+                                            let outcome = join_room(&deps.identity, &deps.rooms, session_id, room_name).await;
+                                            apply_room_outcome(&deps.outbound, session_id, outcome).await;
+                                        }
+                                        ClientMessage::GetRooms => {
+                                            let outcome = get_rooms(&deps.identity, &deps.rooms, session_id).await;
+                                            apply_room_outcome(&deps.outbound, session_id, outcome).await;
+                                        }
+                                        ClientMessage::LeaveRoom => {
+                                            let outcome = leave_room(&deps.identity, &deps.rooms, session_id).await;
+                                            apply_room_outcome(&deps.outbound, session_id, outcome).await;
+                                        }
                                     }
                                 }
-                            } else {
-                                println!("Can't deserialize frame");
+                                Err(error) => {
+                                    println!("Can't deserialize frame: {error:?}");
+                                }
                             }
                         }
                         FrameResult::Incomplete => {
