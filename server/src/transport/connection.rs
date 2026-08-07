@@ -165,11 +165,11 @@ pub async fn handle_connection(
                 _ = &mut writer_done_rx => {
                     disconnect(&deps.sessions, &deps.room_store, session_id, DisconnectReason::WriterDone).await;
                     return Ok(());
-                }
+                },
                 _ = &mut idle_timer => {
                     disconnect(&deps.sessions, &deps.room_store, session_id, DisconnectReason::IdleTimeout).await;
                     return Ok(());
-                }
+                },
             }
         }
     }
