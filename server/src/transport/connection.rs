@@ -1,3 +1,4 @@
+use std::time::Duration;
 use std::{io, sync::Arc};
 
 use shared::framing::{decode_frame, FrameResult};
@@ -6,13 +7,14 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
 use tracing::{info, info_span, warn, Instrument};
 
 use crate::app::auth::authenticate;
 use crate::app::auth::Credentials;
 use crate::app::chat::send_to_room;
 use crate::app::rooms::{create_room, get_rooms, join_room, leave_room};
-use crate::client::{Identity, Outbound, SessionId, Sessions};
+use crate::client::{Identity, Outbound, SessionId, Sessions, SessionsError};
 use crate::room_store::RoomStore;
 use crate::transport::respond::{apply_auth_outcome, apply_chat_outcome, apply_room_outcome};
 
@@ -23,6 +25,7 @@ enum DisconnectReason {
     FrameTooLarge,
     Evicted,
     WriterDone,
+    IdleTimeout,
 } 
 
 pub struct ConnectionDeps {
@@ -31,17 +34,34 @@ pub struct ConnectionDeps {
     outbound: Outbound,
     room_store: RoomStore,
     credentials: Credentials,
+    max_clients: usize,
+    idle_timeout_secs: u64,
 }
 
 impl ConnectionDeps {
-    pub fn new(sessions: Sessions, identity: Identity, outbound: Outbound, room_store: RoomStore, credentials: Credentials) -> Self {
-        Self { sessions, identity, outbound, room_store, credentials }
+    pub fn new(
+        sessions: Sessions,
+        identity: Identity,
+        outbound: Outbound,
+        room_store: RoomStore,
+        credentials: Credentials,
+        max_clients: usize,
+        idle_timeout_secs: u64) -> Self {
+        Self { sessions, identity, outbound, room_store, credentials, max_clients, idle_timeout_secs }
     }
 }
 
 impl Clone for ConnectionDeps {
     fn clone(&self) -> Self {
-        Self { sessions: self.sessions.clone(), identity: self.identity.clone(), outbound: self.outbound.clone(), room_store: self.room_store.clone(), credentials: self.credentials.clone() }
+        Self { 
+            sessions: self.sessions.clone(),
+            identity: self.identity.clone(),
+            outbound: self.outbound.clone(),
+            room_store: self.room_store.clone(),
+            credentials: self.credentials.clone(),
+            max_clients: self.max_clients,
+            idle_timeout_secs: self.idle_timeout_secs,
+        }
     }
 }
 
@@ -53,11 +73,19 @@ pub async fn handle_connection(
     let (evict_tx, mut evict_rx) = oneshot::channel::<()>();
     let (writer_done_tx, mut writer_done_rx) = oneshot::channel::<()>();
     
-    let session_id = deps.sessions.insert_client(outbound_tx, evict_tx).await;
+    let session_id = match deps.sessions.try_insert_client(outbound_tx, evict_tx, deps.max_clients).await {
+        Ok(session_id) => session_id,
+        Err(SessionsError::TooManyConnections) => {
+            warn!("too many connections, rejecting connection");
+            return Ok(());
+        }
+    };
 
     let span = info_span!("connection", session_id);
 
     async move {
+        let idle = Duration::from_secs(deps.idle_timeout_secs);
+        let mut idle_timer = Box::pin(tokio::time::sleep(idle));
         let (mut read_half, write_half) = stream.into_split();
 
         spawn_write_task(outbound_rx, write_half, writer_done_tx);
@@ -85,6 +113,7 @@ pub async fn handle_connection(
                     loop {
                         match decode_frame(&mut pending) {
                             FrameResult::Complete(frame) => {
+                                idle_timer.as_mut().reset(Instant::now() + idle);
                                 match ClientMessage::deserialize(&frame) {
                                     Ok(client_message) => {
                                         match client_message {
@@ -135,6 +164,10 @@ pub async fn handle_connection(
                 },
                 _ = &mut writer_done_rx => {
                     disconnect(&deps.sessions, &deps.room_store, session_id, DisconnectReason::WriterDone).await;
+                    return Ok(());
+                }
+                _ = &mut idle_timer => {
+                    disconnect(&deps.sessions, &deps.room_store, session_id, DisconnectReason::IdleTimeout).await;
                     return Ok(());
                 }
             }

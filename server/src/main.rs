@@ -24,12 +24,14 @@ async fn main() -> io::Result<()> {
 
     dotenvy::dotenv().ok();
     let addr = env::var("CONNECT_ADDR_LOCAL").expect("Connection address must be set");
+    let max_clients = env::var("MAX_CLIENTS").expect("MAX_CLIENTS must be set").parse().unwrap();
+    let idle_timeout_secs = env::var("IDLE_TIMEOUT_SECS").expect("IDLE_TIMEOUT_SECS must be set").parse().unwrap();
     let credentials = init_credentials();
     let room_store= RoomStore::new();
 
     let (sessions, identity, outbound) = new_state();
 
-    let deps = ConnectionDeps::new(sessions, identity, outbound, room_store, credentials);
+    let deps = ConnectionDeps::new(sessions, identity, outbound, room_store, credentials, max_clients, idle_timeout_secs);
 
     info!(%addr, "server starting");
     run(&addr, deps).await

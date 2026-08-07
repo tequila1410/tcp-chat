@@ -18,21 +18,29 @@ struct Client {
 
 type Store = Arc<Mutex<HashMap<SessionId, Client>>>;
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum SessionsError {
+    TooManyConnections,
+}
+
 #[derive(Clone)]
 pub struct Sessions { store: Store }
 
 impl Sessions {
-    pub async fn insert_client(
+    pub async fn try_insert_client(
         &self,
         outbound_tx: mpsc::Sender<Arc<Vec<u8>>>,
         evict_tx: oneshot::Sender<()>,
-    ) -> SessionId {
-        let session_id: SessionId = NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        {
-            let mut clients_lock = self.store.lock().await;
-            clients_lock.insert(session_id, Client { login: None, outbound_tx, evict_tx });
+        max_clients: usize,
+    ) -> Result<SessionId, SessionsError> {
+        let mut clients_lock = self.store.lock().await;
+        if clients_lock.len() >= max_clients {
+            return Err(SessionsError::TooManyConnections);
         }
-        session_id
+        let session_id: SessionId = NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        clients_lock.insert(session_id, Client { login: None, outbound_tx, evict_tx });
+        
+        Ok(session_id)
     }
 
     pub async fn remove_client(&self, session_id: SessionId) {
@@ -137,3 +145,7 @@ pub fn new_state() -> (Sessions, Identity, Outbound) {
     let outbound = Outbound { store: store.clone() };
     (sessions, identity, outbound)
 }
+
+#[cfg(test)]
+#[path = "test.rs"]
+mod tests;

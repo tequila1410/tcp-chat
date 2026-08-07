@@ -2,11 +2,19 @@ use super::*;
 use crate::client::new_state;
 use tokio::sync::{mpsc, oneshot};
 
+const MAX_CLIENTS: usize = 2;
+
 #[tokio::test]
 async fn test_send_to_room() {
     let (sessions, identity, _) = new_state();
-    let first_session_id = sessions.insert_client(mpsc::channel(32).0, oneshot::channel().0).await;
-    let second_session_id = sessions.insert_client(mpsc::channel(32).0, oneshot::channel().0).await;
+    let first_session_id = match sessions.try_insert_client(mpsc::channel(32).0, oneshot::channel().0, MAX_CLIENTS).await {
+        Ok(session_id) => session_id,
+        Err(_) => panic!("too many connections"),
+    };
+    let second_session_id = match sessions.try_insert_client(mpsc::channel(32).0, oneshot::channel().0, MAX_CLIENTS).await {
+        Ok(session_id) => session_id,
+        Err(_) => panic!("too many connections"),
+    };
     identity.authorize_client(first_session_id, "user".to_string()).await;
     identity.authorize_client(second_session_id, "user2".to_string()).await;
     let room_manager = RoomStore::new();
@@ -24,7 +32,10 @@ async fn test_send_to_room() {
 #[tokio::test]
 async fn test_send_to_room_not_authenticated() {
     let (sessions, identity, _) = new_state();
-    let session_id = sessions.insert_client(mpsc::channel(32).0, oneshot::channel().0).await;
+    let session_id = match sessions.try_insert_client(mpsc::channel(32).0, oneshot::channel().0, MAX_CLIENTS).await {
+        Ok(session_id) => session_id,
+        Err(_) => panic!("too many connections"),
+    };
     let room_manager = RoomStore::new();
     let outcome = send_to_room(&identity, &room_manager, session_id, "test room".to_string(), "Hello, world!".to_string()).await;
     assert_eq!(outcome, ChatOutcome::NotAuthenticated);
@@ -33,7 +44,10 @@ async fn test_send_to_room_not_authenticated() {
 #[tokio::test]
 async fn test_send_to_room_room_error() {
     let (sessions, identity, _) = new_state();
-    let session_id = sessions.insert_client(mpsc::channel(32).0, oneshot::channel().0).await;
+    let session_id = match sessions.try_insert_client(mpsc::channel(32).0, oneshot::channel().0, MAX_CLIENTS).await {
+        Ok(session_id) => session_id,
+        Err(_) => panic!("too many connections"),
+    };
     identity.authorize_client(session_id, "user".to_string()).await;
     let room_manager = RoomStore::new();
     let outcome = send_to_room(&identity, &room_manager, session_id, "test room".to_string(), "Hello, world!".to_string()).await;

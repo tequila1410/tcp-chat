@@ -25,10 +25,11 @@ Already in place:
 - Hardened protocol: opcodes, `DecodeError`, `Result` deserialize; protocol unit tests
 - Structured logging (`tracing`): connection span + `session_id`, disconnect reasons, outcome/outbound warns
 - Honest room ownership: `RoomStore` (`Arc<RwLock<RoomState>>`); no fake manager / storage trait
+- Connection limits: `Sessions::try_insert_client` + `MAX_CLIENTS`; idle timeout via resettable `Sleep` on full frame (`IDLE_TIMEOUT_SECS`)
 - CLI client with slash commands
 - Workspace: `server` / `client` / `shared`
 
-Known gaps: Phase 2 complete; next is Phase 3 (networking-first features).
+Known gaps: Phase 3 in progress — next is 3.5 (graceful shutdown), then 3.6; chat UX / presence / PM after limits track; 3.1 last.
 
 ---
 
@@ -141,16 +142,24 @@ Removed the empty passthrough layer; one module owns room state.
 
 Add capabilities that teach backend/networking — only after Phase 1 (ideally after Phase 2).
 
-Suggested order:
+Chosen track (Tokio lifecycle / limits first): **3.3 → 3.5 → 3.6 → 3.2 / 3.4 → 3.1 last**.
 
 | # | Feature | Learning focus | Complexity |
 |---|---------|----------------|------------|
 | 3.1 | Client “current room” UX (leave already in 1.2) | State on client, less typing for `/room` | Low |
 | 3.2 | Presence (join/leave notifications) | Fanout, event design | Medium |
-| 3.3 | Idle timeout / max connections | Resource limits, `tokio::time`, DoS basics | Medium |
+| 3.3 | ✅ Idle timeout / max connections | Resource limits, `tokio::time`, DoS basics | Medium |
 | 3.4 | Private messages | Routing, authorization | Medium |
 | 3.5 | Graceful server shutdown | Cancellation, task tracking | Medium |
 | 3.6 | Rate limiting | Backpressure beyond `try_send` | Medium |
+
+### Connection limits (3.3)
+
+Resource limits on the connection lifecycle; reject is close+log (no wire message yet).
+
+1. **Max connections** — `Sessions::try_insert_client` checks `len` under the same `Mutex` as insert (`SessionsError::TooManyConnections`); `handle_connection` returns `Ok(())` without creating a session. Config: `MAX_CLIENTS`.
+2. **Idle timeout** — resettable `Box::pin(sleep(...))` in connection `select!`; reset only on `FrameResult::Complete`; `DisconnectReason::IdleTimeout` → unified `disconnect`. Config: `IDLE_TIMEOUT_SECS`.
+3. **Tests** — `client/test.rs`: reject at max; slot frees after `remove_client`.
 
 Later (when in-memory truly limits learning):
 
@@ -171,23 +180,19 @@ Do **not** prioritize yet:
 - Redis / Postgres “because production”
 - HTTP/WebSocket gateway before core TCP lifecycle is solid
 - Premature performance work (sharding locks, etc.) unless measuring a real bottleneck
+- Wire message on max-connections reject (v1 = close + log)
 
 ---
 
 ## Near-term focus (next 5 steps)
 
-1. ~~Single `disconnect` path (1.1).~~
-2. ~~Membership rules + leave on the wire (1.2).~~
-3. ~~Align delivery error handling (1.3: unicast = broadcast policy).~~
-4. ~~README sync + remove legacy root `src/` (1.4).~~
-5. ~~Unit tests for room storage / auth (1.5).~~
-6. ~~Phase 2.1 — split `ClientRegistry` (Sessions / Identity / Outbound + ConnectionDeps).~~
-7. ~~Phase 2.2 — testable application layer (outcomes + `respond` + use-case tests; `app/`).~~
-8. ~~Phase 2.3 — harden protocol (opcodes + `DecodeError`; version byte deferred).~~
-9. ~~Phase 2.4 — structured logging with `tracing` + `session_id`.~~
-10. ~~Phase 2.5 — replace empty `RoomManager` with honest `RoomStore`.~~
+1. ~~Phase 3.3 — max connections (`try_insert_client`) + idle timeout (resettable `Sleep`).~~
+2. Phase 3.5 — graceful server shutdown (cancel accept loop, drain connection tasks).
+3. Phase 3.6 — rate limiting (beyond outbound `try_send`).
+4. Phase 3.2 — presence (join/leave notifications).
+5. Phase 3.4 — private messages; **3.1** client current-room UX last.
 
-Phase 1–2 complete. Next: Phase 3 (e.g. 3.1 client current-room UX, or 3.3/3.6 limits — Redis only when there is a real task).
+Phase 1–2 complete; 3.3 done. Next: **3.5 graceful shutdown**.
 
 ---
 
@@ -197,4 +202,4 @@ Phase 1–2 complete. Next: Phase 3 (e.g. 3.1 client current-room UX, or 3.3/3.6
 - Prefer one vertical slice at a time (rule → code → test → README note).
 - When choosing between a flashy feature and an invariant fix, choose the invariant.
 
-Last updated: 2026-08-07 (2.5: RoomStore replaces RoomManager/trait; Phase 2 complete)
+Last updated: 2026-08-07 (3.3: max connections + idle timeout; track 3.5 → 3.6 next)

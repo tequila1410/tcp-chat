@@ -2,9 +2,14 @@ use super::*;
 use crate::client::{Sessions, new_state};
 use tokio::sync::{mpsc, oneshot};
 
+const MAX_CLIENTS: usize = 2;
+
 async fn authed_session(login: &str) -> (Sessions, Identity, SessionId, RoomStore) {
     let (sessions, identity, _) = new_state();
-    let session_id = sessions.insert_client(mpsc::channel(32).0, oneshot::channel().0).await;
+    let session_id = match sessions.try_insert_client(mpsc::channel(32).0, oneshot::channel().0, MAX_CLIENTS).await {
+        Ok(session_id) => session_id,
+        Err(_) => panic!("too many connections"),
+    };
     identity.authorize_client(session_id, login.to_string()).await;
     let room_manager = RoomStore::new();
     (sessions, identity, session_id, room_manager)
@@ -12,7 +17,10 @@ async fn authed_session(login: &str) -> (Sessions, Identity, SessionId, RoomStor
 
 async fn unauthed_session() -> (Identity, SessionId, RoomStore) {
     let (sessions, identity, _) = new_state();
-    let session_id = sessions.insert_client(mpsc::channel(32).0, oneshot::channel().0).await;
+    let session_id = match sessions.try_insert_client(mpsc::channel(32).0, oneshot::channel().0, MAX_CLIENTS).await {
+        Ok(session_id) => session_id,
+        Err(_) => panic!("too many connections"),
+    };
     let room_manager = RoomStore::new();
     (identity, session_id, room_manager)
 }
@@ -61,7 +69,10 @@ async fn test_join_room_success() {
         .await
         .expect("create");
 
-    let guest_id = sessions.insert_client(mpsc::channel(32).0, oneshot::channel().0).await;
+    let guest_id = match sessions.try_insert_client(mpsc::channel(32).0, oneshot::channel().0, MAX_CLIENTS).await {
+        Ok(session_id) => session_id,
+        Err(_) => panic!("too many connections"),
+    };
     identity.authorize_client(guest_id, "guest".to_string()).await;
 
     let outcome = join_room(&identity, &room_manager, guest_id, "lobby".to_string()).await;
