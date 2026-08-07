@@ -8,6 +8,7 @@ use crate::client::{Identity, SessionId};
 
 pub type Credentials = Arc<HashMap<String, String>>;
 
+#[derive(Debug)]
 pub enum AuthOutcome {
     AuthOk,
     AuthErr(String),

@@ -19,8 +19,7 @@ impl RoomState {
 
     fn create_room(&mut self, session_id: SessionId, room_name: String) -> Result<(), RoomError> {
         if self.rooms.contains_key(&room_name) {
-            let error_message = format!("Room name {room_name} exist");
-            return Err(RoomError::AlreadyExist(error_message));
+            return Err(RoomError::AlreadyExist(room_name.clone()));
         }
 
         self.rooms.insert(room_name.clone(), Room { clients: HashSet::new() });
@@ -33,11 +32,9 @@ impl RoomState {
             let room = self
                 .rooms
                 .get(&room_name)
-                .ok_or_else(|| RoomError::NotFound(format!("Can't find room {room_name}")))?;
+                .ok_or_else(|| RoomError::NotFound(room_name.clone()))?;
             if room.clients.contains(&session_id) {
-                return Err(RoomError::AlreadyMember(format!(
-                    "User {session_id} already in room {room_name}"
-                )));
+                return Err(RoomError::AlreadyMember(room_name));
             }
         }
 
@@ -46,7 +43,7 @@ impl RoomState {
         let room = self
             .rooms
             .get_mut(&room_name)
-            .ok_or_else(|| RoomError::NotFound(format!("Can't find room {room_name}")))?;
+            .ok_or_else(|| RoomError::NotFound(room_name.clone()))?;
         room.clients.insert(session_id);
         self.user_rooms.insert(session_id, room_name);
         Ok(())
@@ -58,7 +55,7 @@ impl RoomState {
                 if let Some(room) = self.rooms.get_mut(&room_name) {
                     room.clients.remove(&session_id);
                 }
-                LeaveOutcome::Left
+                LeaveOutcome::Left(room_name)
             }
             None => LeaveOutcome::WasNotMember,
         }
@@ -124,8 +121,7 @@ impl RoomStorage for MemoryRoomStorage {
                 Ok(clients)
             }
             None => {
-                let error_message = format!("Can't find room {room_name}");
-                Err(RoomError::NotFound(error_message))
+                Err(RoomError::NotFound(room_name))
             }
         }
     }
@@ -140,8 +136,7 @@ impl RoomStorage for MemoryRoomStorage {
         match state.rooms.remove(&room_name) {
             Some(_) => Ok(()),
             None => {
-                let error_message = format!("Can't find room {room_name}");
-                Err(RoomError::NotFound(error_message))
+                Err(RoomError::NotFound(room_name))
             }
         }
     }

@@ -23,10 +23,11 @@ Already in place:
 - Application layer `app/` (auth / chat / rooms) returning outcomes; `transport/respond` maps to wire
 - Use-case unit tests without TCP
 - Hardened protocol: opcodes, `DecodeError`, `Result` deserialize; protocol unit tests
+- Structured logging (`tracing`): connection span + `session_id`, disconnect reasons, outcome/outbound warns
 - CLI client with slash commands
 - Workspace: `server` / `client` / `shared`
 
-Known gaps: Phase 2 remainder (2.4–2.5).
+Known gaps: Phase 2 remainder (2.5).
 
 ---
 
@@ -77,7 +78,7 @@ Make the system easier to extend and reason about.
 | 2.1 | ✅ Split `ClientRegistry` responsibilities (session / identity / outbound) | God object blocks safe changes | Clear module boundaries; handlers don't need the whole world |
 | 2.2 | ✅ Testable application layer (handlers return outcomes; transport maps to `ServerMessage`) | Business logic testable without sockets | Use-case unit tests exist |
 | 2.3 | ✅ Harden protocol (opcodes, `DecodeError` instead of bare `Option`; version byte deferred) | Fragile wire format | Decode failures are typed and visible |
-| 2.4 | Structured logging with `tracing` + `session_id` | Concurrent debugging | Can follow one connection through lifecycle |
+| 2.4 | ✅ Structured logging with `tracing` + `session_id` | Concurrent debugging | Can follow one connection through lifecycle |
 | 2.5 | Clarify `RoomManager` (real policies vs thin passthrough) | Fake layer worse than none | Manager owns policy **or** is removed/simplified honestly |
 
 **Exit criteria:** adding a command doesn't require touching five unrelated concerns; core logic has tests; logs are useful under load.
@@ -112,11 +113,22 @@ Wire decode is typed and testable; version byte intentionally deferred (single w
 5. **Tests** — round-trips + unknown type / truncated / bad UTF-8 (and `RoomsGet` list edge cases).
 6. **Deferred** — protocol version byte (see Explicitly deferred).
 
+### Structured logging (2.4)
+
+Server observability via `tracing` + connection span (`session_id`). Policy: lifecycle and decisions, not chat text / passwords.
+
+1. **Subscriber** — `tracing-subscriber` + `EnvFilter` (`RUST_LOG`) in `main`.
+2. **Span** — `connection{session_id}` around the connection future (`.instrument`); write-task stays out of that span.
+3. **Disconnect** — single farewell in `disconnect(reason)` (`Eof` / `ReadError` / `FrameTooLarge` / `Evicted` / `WriterDone`).
+4. **Outbound** — `warn` on Full/Closed (evict detail); no second “disconnected”.
+5. **Respond** — auth / room / chat-error events; create/join/leave success include room name where known; `RoomNotMember` logged without a fake `room` field.
+6. **Wire side-effect** — success create/join/leave payloads carry room name (or not-member status text); errors still use `RoomError` / auth messages.
+
 ---
 
 ## Phase 3 — Features (networking-first)
 
-Add capabilities that teach backend/networking — only after Phase 1 (ideally after 2.1–2.3).
+Add capabilities that teach backend/networking — only after Phase 1 (ideally after Phase 2).
 
 Suggested order:
 
@@ -161,9 +173,10 @@ Do **not** prioritize yet:
 6. ~~Phase 2.1 — split `ClientRegistry` (Sessions / Identity / Outbound + ConnectionDeps).~~
 7. ~~Phase 2.2 — testable application layer (outcomes + `respond` + use-case tests; `app/`).~~
 8. ~~Phase 2.3 — harden protocol (opcodes + `DecodeError`; version byte deferred).~~
-9. Phase 2.4 — structured logging with `tracing` + `session_id`.
+9. ~~Phase 2.4 — structured logging with `tracing` + `session_id`.~~
+10. Phase 2.5 — clarify `RoomManager` (real policy vs thin passthrough).
 
-Phase 1 complete; 2.1–2.3 complete. Prefer 2.4–2.5 before or alongside early Phase 3 features.
+Phase 1 complete; 2.1–2.4 complete. Prefer 2.5 before or alongside early Phase 3 features.
 
 ---
 
@@ -173,4 +186,4 @@ Phase 1 complete; 2.1–2.3 complete. Prefer 2.4–2.5 before or alongside early
 - Prefer one vertical slice at a time (rule → code → test → README note).
 - When choosing between a flashy feature and an invariant fix, choose the invariant.
 
-Last updated: 2026-08-06 (2.3: opcodes + DecodeError + protocol tests; version byte deferred)
+Last updated: 2026-08-07 (2.4: tracing + connection span + disconnect reasons; room name on create/join/leave wire)

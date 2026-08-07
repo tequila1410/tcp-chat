@@ -138,7 +138,7 @@ fn leave_removes_membership() {
     let room_name = "test_room".to_string();
 
     assert!(state.create_room(session_id, room_name.clone()).is_ok());
-    assert_eq!(state.leave(session_id), LeaveOutcome::Left);
+    assert!(matches!(state.leave(session_id), LeaveOutcome::Left(_)));
 
     let room = state.rooms.get(&room_name).expect("room should still exist");
     assert!(!room.clients.contains(&session_id));

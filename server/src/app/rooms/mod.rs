@@ -10,15 +10,16 @@ pub enum RoomOutcome {
     RoomErr(String),
     RoomJoined(String),
     RoomLeft(String),
+    RoomNotMember,
     RoomsGet(Vec<String>),
     NotAuthenticated,
 }
 
 pub async fn create_room<S: RoomStorage>(identity: &Identity, room_manager: &RoomManager<S>, session_id: SessionId, room_name: String) -> RoomOutcome {
     if identity.is_client_authorized(session_id).await {
-        match room_manager.create_room(session_id, room_name).await {
+        match room_manager.create_room(session_id, room_name.clone()).await {
             Ok(_) => {
-                RoomOutcome::RoomCreated("Room successfully created".to_string())
+                RoomOutcome::RoomCreated(room_name)
             }
             Err(error) => {
                 RoomOutcome::RoomErr(error.to_string())
@@ -31,9 +32,9 @@ pub async fn create_room<S: RoomStorage>(identity: &Identity, room_manager: &Roo
 
 pub async fn join_room<S: RoomStorage>(identity: &Identity, room_manager: &RoomManager<S>, session_id: SessionId, room_name: String) -> RoomOutcome {
     if identity.is_client_authorized(session_id).await {
-        match room_manager.join_room(session_id, room_name).await {
+        match room_manager.join_room(session_id, room_name.clone()).await {
             Ok(_) => {
-                RoomOutcome::RoomJoined("Room successfully joined".to_string())
+                RoomOutcome::RoomJoined(room_name)
             }
             Err(error) => {
                 RoomOutcome::RoomErr(error.to_string())
@@ -62,11 +63,11 @@ pub async fn get_rooms<S: RoomStorage>(identity: &Identity, room_manager: &RoomM
 pub async fn leave_room<S: RoomStorage>(identity: &Identity, room_manager: &RoomManager<S>, session_id: SessionId) -> RoomOutcome {
     if identity.is_client_authorized(session_id).await {
         match room_manager.leave(session_id).await {
-            LeaveOutcome::Left => {
-                RoomOutcome::RoomLeft("Room successfully left".to_string())
+            LeaveOutcome::Left(room_name) => {
+                RoomOutcome::RoomLeft(room_name)
             }
             LeaveOutcome::WasNotMember => {
-                RoomOutcome::RoomLeft("You are not in any room\n".to_string())
+                RoomOutcome::RoomNotMember
             }
         }
     } else {

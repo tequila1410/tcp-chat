@@ -23,10 +23,8 @@ async fn test_create_room_success() {
 
     let outcome = create_room(&identity, &room_manager, session_id, "lobby".to_string()).await;
 
-    assert_eq!(
-        outcome,
-        RoomOutcome::RoomCreated("Room successfully created".to_string())
-    );
+    assert_eq!(outcome, RoomOutcome::RoomCreated("lobby".to_string()));
+
     let rooms = room_manager.get_rooms().await.expect("rooms list");
     assert!(rooms.contains(&"lobby".to_string()));
 }
@@ -68,10 +66,7 @@ async fn test_join_room_success() {
 
     let outcome = join_room(&identity, &room_manager, guest_id, "lobby".to_string()).await;
 
-    assert_eq!(
-        outcome,
-        RoomOutcome::RoomJoined("Room successfully joined".to_string())
-    );
+    assert_eq!(outcome, RoomOutcome::RoomJoined("lobby".to_string()));
 }
 
 #[tokio::test]
@@ -149,9 +144,10 @@ async fn test_get_rooms_not_authenticated() {
 
 #[tokio::test]
 async fn test_leave_room_success() {
+    let room_name = "lobby".to_string();
     let (_sessions, identity, session_id, room_manager) = authed_session("user").await;
     room_manager
-        .create_room(session_id, "lobby".to_string())
+        .create_room(session_id, room_name.clone())
         .await
         .expect("create");
 
@@ -159,7 +155,7 @@ async fn test_leave_room_success() {
 
     assert_eq!(
         outcome,
-        RoomOutcome::RoomLeft("Room successfully left".to_string())
+        RoomOutcome::RoomLeft(room_name)
     );
 }
 
@@ -171,7 +167,7 @@ async fn test_leave_room_was_not_member() {
 
     assert_eq!(
         outcome,
-        RoomOutcome::RoomLeft("You are not in any room\n".to_string())
+        RoomOutcome::RoomNotMember
     );
 }
 

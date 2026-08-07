@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use shared::{framing::encode_frame, protocol::ServerMessage};
 use tokio::sync::{Mutex, oneshot, mpsc};
+use tracing::warn;
 
 pub type SessionId = u64;
 
@@ -102,13 +103,13 @@ impl Outbound {
 
     async fn deliver(&self, session_id: SessionId, outbound_tx: mpsc::Sender<Arc<Vec<u8>>>, message_bytes: Arc<Vec<u8>>) {
         match outbound_tx.try_send(message_bytes) {
-            Ok(_) => println!("message sent"),
+            Ok(_) => {},
             Err(mpsc::error::TrySendError::Full(_)) => {
-                println!("Client {session_id} message full");
+                warn!(session_id, "outbound queue full, evicting");
                 remove_client(&self.store, session_id).await;
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                println!("Client {session_id} disconnected");
+                warn!(session_id, "outbound channel closed, evicting");
                 remove_client(&self.store, session_id).await;
             }
         }
