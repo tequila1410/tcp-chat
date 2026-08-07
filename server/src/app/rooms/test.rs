@@ -2,18 +2,18 @@ use super::*;
 use crate::client::{Sessions, new_state};
 use tokio::sync::{mpsc, oneshot};
 
-async fn authed_session(login: &str) -> (Sessions, Identity, SessionId, RoomManager<crate::room::memory::MemoryRoomStorage>) {
+async fn authed_session(login: &str) -> (Sessions, Identity, SessionId, RoomStore) {
     let (sessions, identity, _) = new_state();
     let session_id = sessions.insert_client(mpsc::channel(32).0, oneshot::channel().0).await;
     identity.authorize_client(session_id, login.to_string()).await;
-    let room_manager = RoomManager::new();
+    let room_manager = RoomStore::new();
     (sessions, identity, session_id, room_manager)
 }
 
-async fn unauthed_session() -> (Identity, SessionId, RoomManager<crate::room::memory::MemoryRoomStorage>) {
+async fn unauthed_session() -> (Identity, SessionId, RoomStore) {
     let (sessions, identity, _) = new_state();
     let session_id = sessions.insert_client(mpsc::channel(32).0, oneshot::channel().0).await;
-    let room_manager = RoomManager::new();
+    let room_manager = RoomStore::new();
     (identity, session_id, room_manager)
 }
 

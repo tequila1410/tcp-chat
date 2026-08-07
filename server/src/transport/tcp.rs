@@ -2,12 +2,11 @@ use std::io;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
-use crate::room::RoomStorage;
 use crate::transport::connection::{handle_connection, ConnectionDeps};
 
-pub async fn run<S: RoomStorage + 'static>(
+pub async fn run(
     addr: &str,
-    deps: ConnectionDeps<S>,
+    deps: ConnectionDeps,
 ) -> io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "listening");
@@ -20,7 +19,6 @@ pub async fn run<S: RoomStorage + 'static>(
             }
         };
 
-        // Event: one moment in time (no span yet — session_id appears inside handle_connection).
         info!(%peer, "accepted connection");
 
         let deps = deps.clone();

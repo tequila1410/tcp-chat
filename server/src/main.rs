@@ -2,13 +2,12 @@ use std::io;
 use std::env;
 
 mod client;
-mod room;
+mod room_store;
 mod transport;
 mod app;
 
 use crate::client::new_state;
-use crate::room::memory::MemoryRoomStorage;
-use crate::room::RoomManager;
+use crate::room_store::RoomStore;
 use crate::app::auth::init_credentials;
 use crate::transport::connection::ConnectionDeps;
 use crate::transport::tcp::run;
@@ -26,11 +25,11 @@ async fn main() -> io::Result<()> {
     dotenvy::dotenv().ok();
     let addr = env::var("CONNECT_ADDR_LOCAL").expect("Connection address must be set");
     let credentials = init_credentials();
-    let room_manager: RoomManager<MemoryRoomStorage> = RoomManager::new();
+    let room_store= RoomStore::new();
 
     let (sessions, identity, outbound) = new_state();
 
-    let deps = ConnectionDeps::new(sessions, identity, outbound, room_manager, credentials);
+    let deps = ConnectionDeps::new(sessions, identity, outbound, room_store, credentials);
 
     info!(%addr, "server starting");
     run(&addr, deps).await

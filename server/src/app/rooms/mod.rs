@@ -2,7 +2,8 @@
 mod test;
 
 use crate::client::{Identity, SessionId};
-use crate::room::{LeaveOutcome, RoomManager, RoomStorage};
+use crate::room_store::LeaveOutcome;
+use crate::room_store::RoomStore;
 
 #[derive(Debug, PartialEq)]
 pub enum RoomOutcome {
@@ -15,9 +16,9 @@ pub enum RoomOutcome {
     NotAuthenticated,
 }
 
-pub async fn create_room<S: RoomStorage>(identity: &Identity, room_manager: &RoomManager<S>, session_id: SessionId, room_name: String) -> RoomOutcome {
+pub async fn create_room(identity: &Identity, room_store: &RoomStore, session_id: SessionId, room_name: String) -> RoomOutcome {
     if identity.is_client_authorized(session_id).await {
-        match room_manager.create_room(session_id, room_name.clone()).await {
+        match room_store.create_room(session_id, room_name.clone()).await {
             Ok(_) => {
                 RoomOutcome::RoomCreated(room_name)
             }
@@ -30,9 +31,9 @@ pub async fn create_room<S: RoomStorage>(identity: &Identity, room_manager: &Roo
     }
 }
 
-pub async fn join_room<S: RoomStorage>(identity: &Identity, room_manager: &RoomManager<S>, session_id: SessionId, room_name: String) -> RoomOutcome {
+pub async fn join_room(identity: &Identity, room_store: &RoomStore, session_id: SessionId, room_name: String) -> RoomOutcome {
     if identity.is_client_authorized(session_id).await {
-        match room_manager.join_room(session_id, room_name.clone()).await {
+        match room_store.join_room(session_id, room_name.clone()).await {
             Ok(_) => {
                 RoomOutcome::RoomJoined(room_name)
             }
@@ -45,9 +46,9 @@ pub async fn join_room<S: RoomStorage>(identity: &Identity, room_manager: &RoomM
     }
 }
 
-pub async fn get_rooms<S: RoomStorage>(identity: &Identity, room_manager: &RoomManager<S>, session_id: SessionId) -> RoomOutcome {
+pub async fn get_rooms(identity: &Identity, room_store: &RoomStore, session_id: SessionId) -> RoomOutcome {
     if identity.is_client_authorized(session_id).await {
-        match room_manager.get_rooms().await {
+        match room_store.get_rooms().await {
             Ok(rooms) => {
                 RoomOutcome::RoomsGet(rooms)
             }
@@ -60,9 +61,9 @@ pub async fn get_rooms<S: RoomStorage>(identity: &Identity, room_manager: &RoomM
     }
 }
 
-pub async fn leave_room<S: RoomStorage>(identity: &Identity, room_manager: &RoomManager<S>, session_id: SessionId) -> RoomOutcome {
+pub async fn leave_room(identity: &Identity, room_store: &RoomStore, session_id: SessionId) -> RoomOutcome {
     if identity.is_client_authorized(session_id).await {
-        match room_manager.leave(session_id).await {
+        match room_store.leave(session_id).await {
             LeaveOutcome::Left(room_name) => {
                 RoomOutcome::RoomLeft(room_name)
             }

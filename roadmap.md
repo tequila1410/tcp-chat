@@ -24,10 +24,11 @@ Already in place:
 - Use-case unit tests without TCP
 - Hardened protocol: opcodes, `DecodeError`, `Result` deserialize; protocol unit tests
 - Structured logging (`tracing`): connection span + `session_id`, disconnect reasons, outcome/outbound warns
+- Honest room ownership: `RoomStore` (`Arc<RwLock<RoomState>>`); no fake manager / storage trait
 - CLI client with slash commands
 - Workspace: `server` / `client` / `shared`
 
-Known gaps: Phase 2 remainder (2.5).
+Known gaps: Phase 2 complete; next is Phase 3 (networking-first features).
 
 ---
 
@@ -47,7 +48,7 @@ Stabilize correctness of connections, rooms, and delivery.
 
 ### Membership rules (1.2)
 
-Contract for `MemoryRoomStorage` / room handlers. Storage keeps two indexes in sync: `room → members` and `session → current room`.
+Contract for `RoomStore` / room handlers. Store keeps two indexes in sync: `room → members` and `session → current room`.
 
 1. A session is in **0 or 1** room (not many at once).
 2. **Join** another existing room → atomic **switch** (leave current, then join).
@@ -79,7 +80,7 @@ Make the system easier to extend and reason about.
 | 2.2 | ✅ Testable application layer (handlers return outcomes; transport maps to `ServerMessage`) | Business logic testable without sockets | Use-case unit tests exist |
 | 2.3 | ✅ Harden protocol (opcodes, `DecodeError` instead of bare `Option`; version byte deferred) | Fragile wire format | Decode failures are typed and visible |
 | 2.4 | ✅ Structured logging with `tracing` + `session_id` | Concurrent debugging | Can follow one connection through lifecycle |
-| 2.5 | Clarify `RoomManager` (real policies vs thin passthrough) | Fake layer worse than none | Manager owns policy **or** is removed/simplified honestly |
+| 2.5 | ✅ Clarify `RoomManager` (real policies vs thin passthrough) | Fake layer worse than none | Manager owns policy **or** is removed/simplified honestly |
 
 **Exit criteria:** adding a command doesn't require touching five unrelated concerns; core logic has tests; logs are useful under load.
 
@@ -100,7 +101,7 @@ Use-cases return domain/application **outcomes**; transport maps them to wire + 
 2. **Outcomes** — `AuthOutcome`, `ChatOutcome`, `RoomOutcome` (decisions + routing intent, not `encode_frame`).
 3. **`transport/respond`** — `apply_*_outcome` maps outcome → `ServerMessage` / `reply` / `send_many`.
 4. **`connection`** — decode → use-case → apply; side effects like `authorize_client` stay in the use-case (auth), not in respond.
-5. **Tests** — cover success / not-authenticated / error paths without TCP (in-memory `new_state` + `RoomManager`).
+5. **Tests** — cover success / not-authenticated / error paths without TCP (in-memory `new_state` + `RoomStore`).
 
 ### Hardened protocol (2.3)
 
@@ -123,6 +124,16 @@ Server observability via `tracing` + connection span (`session_id`). Policy: lif
 4. **Outbound** — `warn` on Full/Closed (evict detail); no second “disconnected”.
 5. **Respond** — auth / room / chat-error events; create/join/leave success include room name where known; `RoomNotMember` logged without a fake `room` field.
 6. **Wire side-effect** — success create/join/leave payloads carry room name (or not-member status text); errors still use `RoomError` / auth messages.
+
+### RoomStore instead of RoomManager (2.5)
+
+Removed the empty passthrough layer; one module owns room state.
+
+1. **Removed** — `RoomManager`, `RoomStorage` trait, `MemoryRoomStorage`, `async_trait` usage for rooms.
+2. **`room_store/`** — public `RoomStore` (`Clone` via `Arc<RwLock<RoomState>>`); sync policy stays in private `RoomState`.
+3. **Call sites** — `app/*`, `ConnectionDeps`, `disconnect` take `&RoomStore` (no generics).
+4. **API** — only used operations (`create` / `join` / `leave` / `leave_all` / `get_rooms` / `recipients_for`); dead `delete_room` / `get_room_members` dropped.
+5. **Tests** — membership unit tests on `RoomState` via `room_store_test.rs`.
 
 ---
 
@@ -174,9 +185,9 @@ Do **not** prioritize yet:
 7. ~~Phase 2.2 — testable application layer (outcomes + `respond` + use-case tests; `app/`).~~
 8. ~~Phase 2.3 — harden protocol (opcodes + `DecodeError`; version byte deferred).~~
 9. ~~Phase 2.4 — structured logging with `tracing` + `session_id`.~~
-10. Phase 2.5 — clarify `RoomManager` (real policy vs thin passthrough).
+10. ~~Phase 2.5 — replace empty `RoomManager` with honest `RoomStore`.~~
 
-Phase 1 complete; 2.1–2.4 complete. Prefer 2.5 before or alongside early Phase 3 features.
+Phase 1–2 complete. Next: Phase 3 (e.g. 3.1 client current-room UX, or 3.3/3.6 limits — Redis only when there is a real task).
 
 ---
 
@@ -186,4 +197,4 @@ Phase 1 complete; 2.1–2.4 complete. Prefer 2.5 before or alongside early Phase
 - Prefer one vertical slice at a time (rule → code → test → README note).
 - When choosing between a flashy feature and an invariant fix, choose the invariant.
 
-Last updated: 2026-08-07 (2.4: tracing + connection span + disconnect reasons; room name on create/join/leave wire)
+Last updated: 2026-08-07 (2.5: RoomStore replaces RoomManager/trait; Phase 2 complete)

@@ -13,7 +13,7 @@ use crate::app::auth::Credentials;
 use crate::app::chat::send_to_room;
 use crate::app::rooms::{create_room, get_rooms, join_room, leave_room};
 use crate::client::{Identity, Outbound, SessionId, Sessions};
-use crate::room::{RoomManager, RoomStorage};
+use crate::room_store::RoomStore;
 use crate::transport::respond::{apply_auth_outcome, apply_chat_outcome, apply_room_outcome};
 
 #[derive(Debug)]
@@ -25,29 +25,29 @@ enum DisconnectReason {
     WriterDone,
 } 
 
-pub struct ConnectionDeps<S: RoomStorage> {
+pub struct ConnectionDeps {
     sessions: Sessions,
     identity: Identity,
     outbound: Outbound,
-    rooms: RoomManager<S>,
+    room_store: RoomStore,
     credentials: Credentials,
 }
 
-impl<S: RoomStorage> ConnectionDeps<S> {
-    pub fn new(sessions: Sessions, identity: Identity, outbound: Outbound, rooms: RoomManager<S>, credentials: Credentials) -> Self {
-        Self { sessions, identity, outbound, rooms, credentials }
+impl ConnectionDeps {
+    pub fn new(sessions: Sessions, identity: Identity, outbound: Outbound, room_store: RoomStore, credentials: Credentials) -> Self {
+        Self { sessions, identity, outbound, room_store, credentials }
     }
 }
 
-impl<S: RoomStorage> Clone for ConnectionDeps<S> {
+impl Clone for ConnectionDeps {
     fn clone(&self) -> Self {
-        Self { sessions: self.sessions.clone(), identity: self.identity.clone(), outbound: self.outbound.clone(), rooms: self.rooms.clone(), credentials: self.credentials.clone() }
+        Self { sessions: self.sessions.clone(), identity: self.identity.clone(), outbound: self.outbound.clone(), room_store: self.room_store.clone(), credentials: self.credentials.clone() }
     }
 }
 
-pub async fn handle_connection<S: RoomStorage + 'static>(
+pub async fn handle_connection(
     stream: TcpStream,
-    deps: ConnectionDeps<S>,
+    deps: ConnectionDeps,
 ) -> io::Result<()> {
     let (outbound_tx, outbound_rx) = mpsc::channel::<Arc<Vec<u8>>>(32);
     let (evict_tx, mut evict_rx) = oneshot::channel::<()>();
@@ -72,12 +72,12 @@ pub async fn handle_connection<S: RoomStorage + 'static>(
                 result = read_half.read(&mut buffer) => {
                     let bytes_read = match result {
                         Ok(0) => {
-                            disconnect(&deps.sessions, &deps.rooms, session_id, DisconnectReason::Eof).await;
+                            disconnect(&deps.sessions, &deps.room_store, session_id, DisconnectReason::Eof).await;
                             return Ok(());
                         }
                         Ok(n) => n,
                         Err(error) => {
-                            disconnect(&deps.sessions, &deps.rooms, session_id, DisconnectReason::ReadError).await;
+                            disconnect(&deps.sessions, &deps.room_store, session_id, DisconnectReason::ReadError).await;
                             return Err(error);
                         }
                     };
@@ -89,7 +89,7 @@ pub async fn handle_connection<S: RoomStorage + 'static>(
                                     Ok(client_message) => {
                                         match client_message {
                                             ClientMessage::SendToRoom { room, text } => {
-                                                let outcome = send_to_room(&deps.identity, &deps.rooms, session_id, room, text).await;
+                                                let outcome = send_to_room(&deps.identity, &deps.room_store, session_id, room, text).await;
                                                 apply_chat_outcome(&deps.outbound, session_id, outcome).await;
                                             }
                                             ClientMessage::Auth{login, password} => {
@@ -97,19 +97,19 @@ pub async fn handle_connection<S: RoomStorage + 'static>(
                                                 apply_auth_outcome(&deps.outbound, session_id, outcome).await;
                                             }
                                             ClientMessage::CreateRoom(room_name) => {
-                                                let outcome = create_room(&deps.identity, &deps.rooms, session_id, room_name).await;
+                                                let outcome = create_room(&deps.identity, &deps.room_store, session_id, room_name).await;
                                                 apply_room_outcome(&deps.outbound, session_id, outcome).await;
                                             }
                                             ClientMessage::JoinRoom(room_name) => {
-                                                let outcome = join_room(&deps.identity, &deps.rooms, session_id, room_name).await;
+                                                let outcome = join_room(&deps.identity, &deps.room_store, session_id, room_name).await;
                                                 apply_room_outcome(&deps.outbound, session_id, outcome).await;
                                             }
                                             ClientMessage::GetRooms => {
-                                                let outcome = get_rooms(&deps.identity, &deps.rooms, session_id).await;
+                                                let outcome = get_rooms(&deps.identity, &deps.room_store, session_id).await;
                                                 apply_room_outcome(&deps.outbound, session_id, outcome).await;
                                             }
                                             ClientMessage::LeaveRoom => {
-                                                let outcome = leave_room(&deps.identity, &deps.rooms, session_id).await;
+                                                let outcome = leave_room(&deps.identity, &deps.room_store, session_id).await;
                                                 apply_room_outcome(&deps.outbound, session_id, outcome).await;
                                             }
                                         }
@@ -123,18 +123,18 @@ pub async fn handle_connection<S: RoomStorage + 'static>(
                                 break;
                             }
                             FrameResult::TooLarge => {
-                                disconnect(&deps.sessions, &deps.rooms, session_id, DisconnectReason::FrameTooLarge).await;
+                                disconnect(&deps.sessions, &deps.room_store, session_id, DisconnectReason::FrameTooLarge).await;
                                 return Err(io::Error::new(io::ErrorKind::InvalidData, "Message too large"));
                             }
                         }
                     }
                 },
                 _ = &mut evict_rx => {
-                    disconnect(&deps.sessions, &deps.rooms, session_id, DisconnectReason::Evicted).await;
+                    disconnect(&deps.sessions, &deps.room_store, session_id, DisconnectReason::Evicted).await;
                     return Ok(());
                 },
                 _ = &mut writer_done_rx => {
-                    disconnect(&deps.sessions, &deps.rooms, session_id, DisconnectReason::WriterDone).await;
+                    disconnect(&deps.sessions, &deps.room_store, session_id, DisconnectReason::WriterDone).await;
                     return Ok(());
                 }
             }
@@ -159,8 +159,8 @@ fn spawn_write_task(
     });
 }
 
-async fn disconnect<S: RoomStorage>(sessions: &Sessions, room_manager: &RoomManager<S>, session_id: SessionId, reason: DisconnectReason) {
-    room_manager.leave_all(session_id).await;
+async fn disconnect(sessions: &Sessions, room_store: &RoomStore, session_id: SessionId, reason: DisconnectReason) {
+    room_store.leave_all(session_id).await;
     sessions.remove_client(session_id).await;
     info!(?reason, "session disconnected");
 }
